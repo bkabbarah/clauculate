@@ -1,0 +1,112 @@
+name: build
+
+# Builds on every tag, and on demand. PyInstaller cannot cross-compile, so the
+# macOS bundle is produced on a macOS runner rather than on a developer's
+# Windows machine.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Check the parser without a display
+        run: python -c "import sys; sys.path.insert(0,'src'); import json; from claude_usage.model import parse_usage; s=parse_usage(json.load(open('tools/sample_usage.json'))); assert s.windows and s.limits; print('parsed', len(s.windows), 'windows,', len(s.limits), 'limits')"
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm --clean Clauculate.spec
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clauculate-windows
+          path: dist/Clauculate.exe
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Clauculate.exe
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Check the parser without a display
+        run: python -c "import sys; sys.path.insert(0,'src'); import json; from claude_usage.model import parse_usage; s=parse_usage(json.load(open('tools/sample_usage.json'))); assert s.windows and s.limits; print('parsed', len(s.windows), 'windows,', len(s.limits), 'limits')"
+
+      # Everything except the GUI can be exercised headlessly. The tray and Tk
+      # need a session, so they are not started here.
+      - name: Check the read-only guard and the store
+        run: |
+          python - <<'PY'
+          import sys, tempfile, pathlib
+          sys.path.insert(0, "src")
+          from claude_usage import readonly_guard
+          from claude_usage.store import HistoryStore
+
+          root = pathlib.Path(tempfile.mkdtemp()) / ".claude"
+          root.mkdir(parents=True)
+          (root / "keep.txt").write_text("untouched")
+          readonly_guard.protect(root)
+          readonly_guard.install()
+          try:
+              open(root / "nope.txt", "w")
+          except readonly_guard.ReadOnlyViolation:
+              print("guard blocks writes inside a protected root")
+          else:
+              raise SystemExit("guard did NOT block a write")
+
+          db = pathlib.Path(tempfile.mkdtemp()) / "h.sqlite3"
+          store = HistoryStore(db)
+          print("store opened at", db)
+          store.close()
+          PY
+
+      - name: Build
+        run: python -m PyInstaller --noconfirm --clean --windowed --name Clauculate --paths src --hidden-import PIL._tkinter_finder run.py
+
+      - name: Package the app bundle
+        run: |
+          cd dist
+          if [ -d "Clauculate.app" ]; then
+            zip -r Clauculate-macos.zip Clauculate.app
+          else
+            zip -r Clauculate-macos.zip Clauculate
+          fi
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clauculate-macos
+          path: dist/Clauculate-macos.zip
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Clauculate-macos.zip

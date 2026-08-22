@@ -340,23 +340,27 @@ inventing a Fable row.
 
 **Windows works.** Everything here ran on Windows 11 with Claude Code 2.1.239.
 
-**macOS and Linux remain unverified.** Response parsing, polling, backoff,
-history, the read-only guard, and the test suite are plain Python and carry
-over. Paths resolve per platform, and the Accounts tab emits shell-appropriate
-commands and opens Terminal.app on macOS.
+**macOS builds in CI but is untested.** PyInstaller cannot cross-compile, so
+`.github/workflows/build.yml` builds the bundle on a `macos-latest` runner and
+attaches it to the release. That gets you a downloadable `.app` without anyone
+owning a Mac. The workflow also runs the parser and the read-only guard
+without a display, since neither needs one.
 
-Someone with a Mac needs to check three things before anyone claims it runs:
+What it cannot do is prove the app finds your credentials. Claude Code stores
+its OAuth token in the **login Keychain** on macOS, not in a file. The evidence
+is in the installed binary, which carries
+`security find-generic-password -s anthropic-api -w` alongside
+`KeychainPrefetch`, `KeychainPrefetchCompleted` and `KeychainAsync` telemetry
+names. So `credentials.py` now falls back to the Keychain when no
+`.credentials.json` exists, trying each plausible service name and taking the
+first that parses. Reading the Keychain is a read; nothing there writes.
 
-1. **Where the credentials live.** Clauculate reads `.credentials.json` from
-   the profile directory. Claude Code's `--bare` flag documents skipping
-   "keychain reads", which suggests macOS keeps OAuth tokens in the login
-   Keychain instead of a file. If so, `credentials.py` needs a Keychain reader
-   before anything works. This blocks the rest.
-2. **Tray threading.** The macOS `pystray` backend wants the main thread, and
-   so does Tk. Today Tk owns main and the tray runs on a worker, which suits
-   Windows and Linux.
-3. **The build.** PyInstaller cannot cross-compile, so a `.app` comes off a
-   Mac.
+The service name is a guess and the path has never run on a Mac. Treat the
+macOS build as needing a first tester, not as supported.
+
+One more thing a Mac would have to sort out: `pystray`'s macOS backend wants
+the main thread and so does Tk. Today Tk owns main and the tray runs on a
+worker, which suits Windows and Linux.
 
 Pull requests welcome. A clean import proves nothing.
 
@@ -397,6 +401,10 @@ Clawd comes from the [clawd-animation skill](https://mmguo.dev/clawd/) by
 mmguo. Clauculate ports the sprite data, the body matrix, eye variants,
 anchors, and `#CD6E58`, onto a Tk canvas. The skill draws the same pixel grid
 to an HTML canvas.
+
+Clauculate's own mark adds a two-tone accountant's eyeshade to that sprite, so
+the icon, the tray and the header read as this app rather than as the mascot
+itself. Panel tiles use plain Clawd.
 
 This README follows [stop-slop](https://github.com/hvpandya/stop-slop) by
 Hardik Pandya.

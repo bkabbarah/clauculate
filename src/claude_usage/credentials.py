@@ -19,6 +19,8 @@ They are never logged, never persisted, never rendered.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,20 +51,66 @@ class Credentials:
         )
 
 
+# macOS keeps Claude Code's OAuth token in the login Keychain rather than in a
+# file. Evidence: the installed binary contains
+# "security find-generic-password -s anthropic-api -w" plus KeychainPrefetch /
+# KeychainPrefetchCompleted / KeychainAsync telemetry names.
+#
+# The exact service name is NOT confirmed, so every plausible one is tried and
+# the first that yields a parseable credential object wins. Reading the
+# Keychain is a read; nothing here writes.
+_KEYCHAIN_SERVICES = (
+    "Claude Code-credentials",
+    "Claude Code",
+    "anthropic-api",
+)
+
+
+def _read_macos_keychain() -> dict | None:
+    """Ask the login Keychain for the credential blob. Returns None if absent.
+
+    Untested: no macOS machine was available. Written defensively so a wrong
+    guess degrades to "no credentials found" rather than an exception.
+    """
+    if sys.platform != "darwin":
+        return None
+    for service in _KEYCHAIN_SERVICES:
+        try:
+            result = subprocess.run(
+                ["security", "find-generic-password", "-s", service, "-w"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        try:
+            data = json.loads(result.stdout.strip())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and "claudeAiOauth" in data:
+            return data
+    return None
+
+
 def read_credentials(config_dir: Path) -> Credentials:
     """Open the credential file read-only. This never creates or mutates it."""
     path = Path(config_dir) / ".credentials.json"
 
+    data = None
     if not path.exists():
-        raise CredentialError(
-            f"no .credentials.json in {config_dir} - "
-            f'run `claude auth login` with CLAUDE_CONFIG_DIR="{config_dir}"'
-        )
+        data = _read_macos_keychain()
+        if data is None:
+            raise CredentialError(
+                f"no .credentials.json in {config_dir} - "
+                f'run `claude auth login` with CLAUDE_CONFIG_DIR="{config_dir}"'
+            )
 
     try:
-        # Explicit read-binary. The readonly_guard rejects any write mode here.
-        with open(path, "rb") as fh:
-            data = json.loads(fh.read().decode("utf-8"))
+        if data is None:
+            # Explicit read-binary. readonly_guard rejects any write mode here.
+            with open(path, "rb") as fh:
+                data = json.loads(fh.read().decode("utf-8"))
     except json.JSONDecodeError as exc:
         raise CredentialError(f"credential store is not valid JSON: {exc}") from exc
     except OSError as exc:

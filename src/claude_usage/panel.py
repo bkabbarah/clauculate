@@ -1014,8 +1014,8 @@ class Panel:
         except tk.TclError:
             pass
 
-    def register_sprite(self, canvas, cell, mood_of) -> None:
-        self._sprites.append((canvas, cell, mood_of))
+    def register_sprite(self, canvas, cell, mood_of, visor: bool = False) -> None:
+        self._sprites.append((canvas, cell, mood_of, visor))
 
     def copy_raw(self, label: str) -> None:
         status = self.poller.status(label)
@@ -1045,7 +1045,7 @@ class Panel:
         win.protocol("WM_DELETE_WINDOW", self.hide)
 
         try:
-            self._icon = clawd.tk_icon(tk, max(1, scale.px(2)))
+            self._icon = clawd.tk_icon_marked(tk, max(1, scale.px(2)))
             win.iconphoto(False, self._icon)
         except tk.TclError:
             pass
@@ -1092,7 +1092,7 @@ class Panel:
                          highlightthickness=0)
         # Everything in the bar is centred on the same axis.
         lead.pack(side="left", padx=(pad, scale.px(10)))
-        self.register_sprite(lead, cell, self._worst_mood)
+        self.register_sprite(lead, cell, self._worst_mood, visor=True)
 
         # Tk cannot colour part of one label's text, so the wordmark is two.
         mark = tk.Frame(bar, bg=BG_BAR)
@@ -1541,12 +1541,14 @@ class Panel:
             return
         self._frame += 1
         for entry in list(self._sprites):
-            canvas, cell, mood_of = entry
+            canvas, cell, mood_of, visor = entry
             try:
                 if not canvas.winfo_exists():
                     self._sprites.remove(entry)
                     continue
-                clawd.draw_clawd(canvas, self._frame, mood_of(), cell=cell)
+                clawd.draw_clawd(
+                    canvas, self._frame, mood_of(), cell=cell, visor=visor
+                )
             except tk.TclError:
                 pass
         self._anim_job = self.root.after(125, self._animate)

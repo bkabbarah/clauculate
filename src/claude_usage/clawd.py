@@ -16,6 +16,18 @@ import math
 BODY_COLOR = "#CD6E58"
 EYE_COLOR = "#000000"
 
+# Clauculate's own mark: an accountant's eyeshade on the stock sprite. Two
+# tones so it reads as a cap with a brim rather than a green stripe. Used for
+# the window icon, the tray and the header only; panel tiles stay plain.
+VISOR_BAND = "#14532a"
+VISOR_BRIM = "#2e9e4f"
+
+# (row offset from the body top, columns, colour)
+VISOR_ROWS = (
+    (-2, range(4, 10), VISOR_BAND),
+    (-1, range(3, 11), VISOR_BRIM),
+)
+
 # 14x8 flat wide body. 1 = body cell.
 CLAWD_BODY = [
     [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0],
@@ -138,6 +150,7 @@ def draw_clawd(
     cell: int = 4,
     body_color: str = BODY_COLOR,
     tag: str = "clawd",
+    visor: bool = False,
 ) -> None:
     """Repaint Clawd. Clears only its own tag, so other canvas items survive."""
     canvas.delete(tag)
@@ -162,6 +175,11 @@ def draw_clawd(
         rx, ry = variant["right"]
         px(ox + EYE_LEFT[0] + lx, oy + EYE_LEFT[1] + ly, EYE_COLOR)
         px(ox + EYE_RIGHT[0] + rx, oy + EYE_RIGHT[1] + ry, EYE_COLOR)
+
+    if visor:
+        for row_offset, columns, colour in VISOR_ROWS:
+            for column in columns:
+                px(ox + column, oy + row_offset, colour)
 
     _draw_accessory(px, frame, mood, oy)
 
@@ -220,4 +238,32 @@ def tk_icon(tk_module, cell: int = 2):
         for dy in range(cell):
             for dx in range(cell):
                 image.put(EYE_COLOR, (ex * cell + dx, ey * cell + dy))
+    return image
+
+
+def tk_icon_marked(tk_module, cell: int = 2):
+    """The window icon: Clawd wearing the visor, on a square canvas."""
+    width = BODY_W * cell
+    height = (BODY_H + 2) * cell          # two rows for the visor
+    side = max(width, height)
+    image = tk_module.PhotoImage(width=side, height=side)
+    ox = (side - width) // 2
+    oy = (side - height) // 2 + 2 * cell  # body sits below the visor rows
+
+    def paint(gx, gy, colour):
+        for dy in range(cell):
+            for dx in range(cell):
+                x, y = gx * cell + dx + ox, gy * cell + dy + oy
+                if 0 <= x < side and 0 <= y < side:
+                    image.put(colour, (x, y))
+
+    for r in range(BODY_H):
+        for c in range(BODY_W):
+            if CLAWD_BODY[r][c]:
+                paint(c, r, BODY_COLOR)
+    for (ex, ey) in (EYE_LEFT, EYE_RIGHT):
+        paint(ex, ey, EYE_COLOR)
+    for row_offset, columns, colour in VISOR_ROWS:
+        for column in columns:
+            paint(column, row_offset, colour)
     return image

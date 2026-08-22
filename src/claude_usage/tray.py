@@ -61,7 +61,7 @@ def _draw_clawd(image: Image.Image, cell: int) -> None:
     width = clawd.BODY_W * cell
     height = clawd.BODY_H * cell
     ox = (ICON_SIZE - width) // 2
-    oy = (ICON_SIZE - height) // 2
+    oy = (ICON_SIZE - height) // 2 + cell   # room above for the visor
 
     for r in range(clawd.BODY_H):
         for c in range(clawd.BODY_W):
@@ -73,6 +73,12 @@ def _draw_clawd(image: Image.Image, cell: int) -> None:
     for (ex, ey) in (clawd.EYE_LEFT, clawd.EYE_RIGHT):
         x, y = ox + ex * cell, oy + ey * cell
         draw.rectangle([x, y, x + cell - 1, y + cell - 1], fill=clawd.EYE_COLOR)
+
+    # The visor is what makes this Clauculate's mark rather than the mascot.
+    for row_offset, columns, colour in clawd.VISOR_ROWS:
+        for column in columns:
+            x, y = ox + column * cell, oy + row_offset * cell
+            draw.rectangle([x, y, x + cell - 1, y + cell - 1], fill=colour)
 
 
 def _shorten(line: str, label_width: int) -> str:
