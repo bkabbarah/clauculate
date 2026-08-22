@@ -80,26 +80,16 @@ class AccountsTab:
     # ------------------------------------------------------------------ build
 
     def _build(self) -> None:
-        head = tk.Frame(self.frame, bg=BG)
-        head.pack(fill="x", padx=PAD, pady=(PAD, GAP))
-
-        tk.Label(
-            head, text="Accounts", bg=BG, fg=FG, font=("Segoe UI", 13, "bold")
-        ).pack(side="left")
-
-        self.scan_button = tk.Button(
-            head, text="Scan for profiles", command=self.scan,
-            bg=BG_CARD, fg=FG, font=FONT_SMALL, relief="flat",
-            activebackground=BG_TRACK, activeforeground=FG, padx=10, pady=3,
-        )
-        self.scan_button.pack(side="right")
+        # The app bar carries the title and the Scan button, so this tab does
+        # not repeat them.
+        self.scan_button = None
 
         self.status = tk.Label(
             self.frame,
             text="Scan to find Claude profiles on this machine.",
             bg=BG, fg=FG_DIM, font=FONT_SMALL, anchor="w", justify="left",
         )
-        self.status.pack(fill="x", padx=PAD)
+        self.status.pack(fill="x", padx=PAD, pady=(PAD, 0))
 
         # --- scrollable list of discovered profiles
         body = tk.Frame(self.frame, bg=BG)
@@ -194,7 +184,8 @@ class AccountsTab:
         if self._scanning:
             return
         self._scanning = True
-        self.scan_button.configure(text="Scanning...", state="disabled")
+        if self.scan_button is not None:
+            self.scan_button.configure(text="Scanning...", state="disabled")
         self.status.configure(
             text="Identifying each profile against the API...", fg=FG_DIM
         )
@@ -219,7 +210,8 @@ class AccountsTab:
 
     def _render(self, entries, labels, error) -> None:
         self._scanning = False
-        self.scan_button.configure(text="Scan for profiles", state="normal")
+        if self.scan_button is not None:
+            self.scan_button.configure(text="Scan for profiles", state="normal")
         self.entries, self.labels = entries, labels
 
         for child in self.list_frame.winfo_children():

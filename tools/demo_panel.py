@@ -143,6 +143,9 @@ class FakePoller:
     def request_refresh(self, label=None):
         pass
 
+    def next_due_seconds(self):
+        return 172.0
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()

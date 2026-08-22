@@ -170,6 +170,13 @@ class Poller:
                     values.append(worst)
         return max(values) if values else None
 
+    def next_due_seconds(self) -> float | None:
+        """Seconds until the soonest scheduled poll across all accounts."""
+        with self._lock:
+            if not self._next_due:
+                return None
+            return max(0.0, min(self._next_due.values()) - time.time())
+
     def replace_accounts(self, accounts: list[Account]) -> None:
         """Swap the monitored set after accounts.json changes.
 

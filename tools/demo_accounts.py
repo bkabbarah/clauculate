@@ -96,7 +96,7 @@ def main() -> int:
     panel = Panel(root, FakePoller(3), store=None, app_state=state)
     panel.show()
     panel.window.geometry("%dx%d+30+20" % (args.width, args.height))
-    panel.notebook.select(1)          # Accounts tab
+    panel.select_tab("Accounts")
     panel.accounts_tab.scan()         # live identity scan
 
     if args.shot:

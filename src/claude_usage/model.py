@@ -136,14 +136,14 @@ class UsageSnapshot:
             pct = getattr(session, "utilization", None)
             if pct is None:
                 pct = getattr(session, "percent", None)
-            out.append(("5h", pct, session.resets_at))
+            out.append(("session", pct, session.resets_at))
 
         weekly = self.window("seven_day") or from_limit("weekly_all")
         if weekly is not None:
             pct = getattr(weekly, "utilization", None)
             if pct is None:
                 pct = getattr(weekly, "percent", None)
-            out.append(("week", pct, weekly.resets_at))
+            out.append(("weekly", pct, weekly.resets_at))
 
         scoped = [r for r in self.limits if r.scope_label and r.percent is not None]
         if scoped:

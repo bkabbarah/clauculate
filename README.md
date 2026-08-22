@@ -3,7 +3,7 @@
 A Windows tray app that shows rate-limit usage across several Claude accounts.
 It reads each account's usage and displays it. Nothing else.
 
-![panel](shots/panel_collapsed.png)
+![panel](shots/board.png)
 
 ## Read this first
 
@@ -108,17 +108,21 @@ account. Windows caps that tooltip at 128 characters, so Clauculate shortens
 long labels to keep every account visible, and says how many it dropped when
 even that fails.
 
-**The panel** opens when you click the icon. Each account collapses to one row
-carrying its session, weekly, and model-scoped numbers. Click a row to open
-everything the endpoint returned for that account, including keys this build
-has never seen.
+**The panel** opens when you click the icon. Accounts sit on a two-column
+board. Each tile carries session, weekly, and model-scoped columns beside a
+freshness stamp, and selecting one fills the drawer underneath with everything
+the endpoint returned for that account, including keys this build has never
+seen.
 
-![expanded](shots/panel_expanded.png)
-
-An expanded row gives you the reset clock two ways, `resets in 2h 14m` beside
+The drawer names every limit twice: a readable title, and the raw key beside it
+in grey. A renamed or new key stays visible rather than hiding behind a
+friendly label. Reset clocks appear two ways, `resets in 2h 14m` next to
 `tomorrow 5:15 AM`, converted from UTC through the OS timezone rules so DST
-lands right. It also carries a freshness stamp, a 7-day sparkline drawn from
-local history, and a **Copy raw JSON** button for the day the schema moves.
+lands right. **Copy raw JSON** covers the day the schema moves.
+
+The app bar holds a chip that cycles worst, average, and most free when you
+click it, plus a sort toggle for the board. Under it a status strip names the
+last poll, the next one, and any account in trouble.
 
 **Clawd**, the pixel crab, reports the same state a second way. His pose tracks
 the account rather than decorating it:
