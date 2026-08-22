@@ -11,6 +11,7 @@ import threading
 import pystray
 from PIL import Image, ImageDraw
 
+from . import clawd
 from .formatting import color_for, format_percent
 from .poller import Poller
 
@@ -21,24 +22,53 @@ ICON_SIZE = 64
 TOOLTIP_LIMIT = 127
 
 
+RING_WIDTH = 6          # at ICON_SIZE; Windows downscales to 16/24/32
+RING_TRACK = "#3a3a3a"
+
+
 def _render_icon(worst: float | None) -> Image.Image:
+    """A ring gauge around Clawd.
+
+    The arc reads as a dial at a glance and survives downscaling better than a
+    number, which is illegible below 32px. Clawd keeps his coral so the icon
+    stays recognisable as this app; the arc alone carries severity.
+    """
     image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((2, 2, ICON_SIZE - 3, ICON_SIZE - 3), fill=color_for(worst))
+
+    inset = 2
+    box = (inset, inset, ICON_SIZE - inset - 1, ICON_SIZE - inset - 1)
+    draw.ellipse(box, outline=RING_TRACK, width=RING_WIDTH)
 
     if worst is not None:
-        text = str(int(round(worst)))
-        # Centre the number without depending on a bundled font file.
-        try:
-            box = draw.textbbox((0, 0), text)
-            tw, th = box[2] - box[0], box[3] - box[1]
-        except Exception:
-            tw, th = 0, 0
-        draw.text(
-            ((ICON_SIZE - tw) / 2, (ICON_SIZE - th) / 2 - 1),
-            text, fill="#ffffff",
-        )
+        sweep = 360.0 * max(0.0, min(100.0, float(worst))) / 100.0
+        if sweep > 0:
+            # Start at 12 o'clock and run clockwise.
+            draw.arc(box, start=-90, end=-90 + sweep,
+                     fill=color_for(worst), width=RING_WIDTH)
+
+    _draw_clawd(image, cell=3)
     return image
+
+
+def _draw_clawd(image: Image.Image, cell: int) -> None:
+    """Paint the sprite centred inside the ring."""
+    draw = ImageDraw.Draw(image)
+    width = clawd.BODY_W * cell
+    height = clawd.BODY_H * cell
+    ox = (ICON_SIZE - width) // 2
+    oy = (ICON_SIZE - height) // 2
+
+    for r in range(clawd.BODY_H):
+        for c in range(clawd.BODY_W):
+            if not clawd.CLAWD_BODY[r][c]:
+                continue
+            x, y = ox + c * cell, oy + r * cell
+            draw.rectangle([x, y, x + cell - 1, y + cell - 1],
+                           fill=clawd.BODY_COLOR)
+    for (ex, ey) in (clawd.EYE_LEFT, clawd.EYE_RIGHT):
+        x, y = ox + ex * cell, oy + ey * cell
+        draw.rectangle([x, y, x + cell - 1, y + cell - 1], fill=clawd.EYE_COLOR)
 
 
 def _shorten(line: str, label_width: int) -> str:

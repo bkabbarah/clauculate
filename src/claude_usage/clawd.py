@@ -198,3 +198,26 @@ def _draw_accessory(px, frame: int, mood: str, oy: int) -> None:
         # Three red pixels, blinking fast.
         for c in (5, 7, 9):
             px(c, oy - 2, "#cc3333")
+
+
+def tk_icon(tk_module, cell: int = 2):
+    """Build a Tk PhotoImage of Clawd for the window/taskbar icon.
+
+    Tk's iconphoto needs a tk.PhotoImage, so the sprite is written pixel by
+    pixel. Small enough that the cost does not matter.
+    """
+    width, height = BODY_W * cell, BODY_H * cell
+    image = tk_module.PhotoImage(width=width, height=height)
+    # Transparent background, then the body and eyes on top.
+    for r in range(BODY_H):
+        for c in range(BODY_W):
+            if not CLAWD_BODY[r][c]:
+                continue
+            for dy in range(cell):
+                for dx in range(cell):
+                    image.put(BODY_COLOR, (c * cell + dx, r * cell + dy))
+    for (ex, ey) in (EYE_LEFT, EYE_RIGHT):
+        for dy in range(cell):
+            for dx in range(cell):
+                image.put(EYE_COLOR, (ex * cell + dx, ey * cell + dy))
+    return image

@@ -21,7 +21,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any
 
-from . import clawd
+from . import clawd, scale
 from .profile import discover, suggest_labels
 
 BG = "#171717"
@@ -35,14 +35,14 @@ OK = "#2e9e4f"
 WARN = "#d99100"
 BAD = "#cc3333"
 
-FONT = ("Segoe UI", 9)
-FONT_BOLD = ("Segoe UI", 10, "bold")
-FONT_MONO = ("Consolas", 9)
-FONT_SMALL = ("Segoe UI", 8)
-FONT_SECTION = ("Segoe UI", 8, "bold")
-
-PAD = 14
-GAP = 8
+# Design px, resolved through scale.py at widget-creation time.
+def FONT():        return scale.font(12)
+def FONT_BOLD():   return scale.font(13, bold=True)
+def FONT_MONO():   return scale.font(12, mono=True)
+def FONT_SMALL():  return scale.font(11)
+def FONT_SECTION():return scale.font(10, bold=True)
+def PAD():         return scale.px(14)
+def GAP():         return scale.px(8)
 
 
 IS_WINDOWS = sys.platform.startswith("win")
@@ -87,15 +87,18 @@ class AccountsTab:
         self.status = tk.Label(
             self.frame,
             text="Scan to find Claude profiles on this machine.",
-            bg=BG, fg=FG_DIM, font=FONT_SMALL, anchor="w", justify="left",
+            bg=BG, fg=FG_DIM, font=FONT_SMALL(), anchor="w", justify="left",
         )
-        self.status.pack(fill="x", padx=PAD, pady=(PAD, 0))
+        self.status.pack(fill="x", padx=PAD(), pady=(PAD(), 0))
 
         # --- scrollable list of discovered profiles
         body = tk.Frame(self.frame, bg=BG)
-        body.pack(fill="both", expand=True, padx=PAD - 4, pady=GAP)
+        body.pack(fill="both", expand=True, padx=scale.px(10), pady=GAP())
         canvas = tk.Canvas(body, bg=BG, highlightthickness=0)
-        bar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        bar = ttk.Scrollbar(
+            body, orient="vertical", command=canvas.yview,
+            style="Clau.Vertical.TScrollbar",
+        )
         inner = tk.Frame(canvas, bg=BG)
         item = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=bar.set)
@@ -115,11 +118,11 @@ class AccountsTab:
 
     def _build_add_section(self) -> None:
         box = tk.Frame(self.frame, bg=BG_CARD)
-        box.pack(fill="x", padx=PAD, pady=(0, PAD))
+        box.pack(fill="x", padx=PAD(), pady=(0, PAD()))
 
         tk.Label(
-            box, text="ADD A NEW ACCOUNT", bg=BG_CARD, fg=FG_MUTED, font=FONT_SECTION
-        ).pack(anchor="w", padx=PAD, pady=(GAP, 2))
+            box, text="ADD A NEW ACCOUNT", bg=BG_CARD, fg=FG_MUTED, font=FONT_SECTION()
+        ).pack(anchor="w", padx=PAD(), pady=(GAP(), 2))
 
         tk.Label(
             box,
@@ -128,33 +131,33 @@ class AccountsTab:
                 "never handles. It prepares the command; you run the login and "
                 "approve it in the browser."
             ),
-            bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL,
+            bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL(),
             wraplength=900, justify="left", anchor="w",
-        ).pack(fill="x", padx=PAD)
+        ).pack(fill="x", padx=PAD())
 
         form = tk.Frame(box, bg=BG_CARD)
-        form.pack(fill="x", padx=PAD, pady=GAP)
+        form.pack(fill="x", padx=PAD(), pady=GAP())
 
         tk.Label(
-            form, text="Profile folder", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL
-        ).grid(row=0, column=0, sticky="w", padx=(0, GAP))
+            form, text="Profile folder", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
+        ).grid(row=0, column=0, sticky="w", padx=(0, GAP()))
         self.dir_var = tk.StringVar(value=".claude-new")
         tk.Entry(
             form, textvariable=self.dir_var, width=26, bg="#141414", fg=FG,
-            insertbackground=FG, relief="flat", font=FONT_MONO,
-        ).grid(row=0, column=1, sticky="w", padx=(0, PAD))
+            insertbackground=FG, relief="flat", font=FONT_MONO(),
+        ).grid(row=0, column=1, sticky="w", padx=(0, PAD()))
 
         tk.Label(
-            form, text="Email", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL
-        ).grid(row=0, column=2, sticky="w", padx=(0, GAP))
+            form, text="Email", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
+        ).grid(row=0, column=2, sticky="w", padx=(0, GAP()))
         self.email_var = tk.StringVar(value="")
         tk.Entry(
             form, textvariable=self.email_var, width=30, bg="#141414", fg=FG,
-            insertbackground=FG, relief="flat", font=FONT_MONO,
+            insertbackground=FG, relief="flat", font=FONT_MONO(),
         ).grid(row=0, column=3, sticky="w")
 
         buttons = tk.Frame(box, bg=BG_CARD)
-        buttons.pack(fill="x", padx=PAD, pady=(0, GAP))
+        buttons.pack(fill="x", padx=PAD(), pady=(0, GAP()))
         for text, command in (
             ("Copy login command", self._copy_command),
             ("Open terminal here" if not IS_WINDOWS else "Open PowerShell here",
@@ -162,9 +165,9 @@ class AccountsTab:
         ):
             tk.Button(
                 buttons, text=text, command=command, bg=BG_TRACK, fg=FG,
-                font=FONT_SMALL, relief="flat", activebackground="#404040",
-                activeforeground=FG, padx=10, pady=3,
-            ).pack(side="left", padx=(0, GAP))
+                font=FONT_SMALL(), relief="flat", activebackground="#404040",
+                activeforeground=FG, padx=scale.px(10), pady=scale.px(3),
+            ).pack(side="left", padx=(0, GAP()))
 
         self.add_hint = tk.Label(
             box,
@@ -173,10 +176,10 @@ class AccountsTab:
                 "the browser silently re-grants the account you are already signed "
                 "in as, and you get a duplicate."
             ),
-            bg=BG_CARD, fg=WARN, font=FONT_SMALL,
+            bg=BG_CARD, fg=WARN, font=FONT_SMALL(),
             wraplength=900, justify="left", anchor="w",
         )
-        self.add_hint.pack(fill="x", padx=PAD, pady=(0, PAD))
+        self.add_hint.pack(fill="x", padx=PAD(), pady=(0, PAD()))
 
     # ------------------------------------------------------------------- scan
 
@@ -254,59 +257,59 @@ class AccountsTab:
 
         shell = tk.Frame(self.list_frame, bg=BG)
         shell.pack(fill="x", pady=3)
-        tk.Frame(shell, bg=accent, width=3).pack(side="left", fill="y")
+        tk.Frame(shell, bg=accent, width=scale.px(3)).pack(side="left", fill="y")
         row = tk.Frame(shell, bg=BG_CARD)
         row.pack(side="left", fill="both", expand=True)
 
         # grid, not pack: pack lets the left and right groups overlap once the
         # row runs out of width, which silently mangles both.
         top = tk.Frame(row, bg=BG_CARD)
-        top.pack(fill="x", padx=PAD, pady=(GAP, 0))
+        top.pack(fill="x", padx=PAD(), pady=(GAP(), 0))
         top.columnconfigure(2, weight=1)   # the tier column absorbs the slack
 
         tk.Label(
-            top, text=entry.name, bg=BG_CARD, fg=FG, font=FONT_MONO, anchor="w"
-        ).grid(row=0, column=0, sticky="w", padx=(0, GAP + 2))
+            top, text=entry.name, bg=BG_CARD, fg=FG, font=FONT_MONO(), anchor="w"
+        ).grid(row=0, column=0, sticky="w", padx=(0, GAP() + 2))
 
         tk.Label(
             top, text=entry.status_text, bg=BG_CARD,
-            fg=BAD if entry.error else FG, font=FONT, anchor="w",
-        ).grid(row=0, column=1, sticky="w", padx=(0, GAP + 2))
+            fg=BAD if entry.error else FG, font=FONT(), anchor="w",
+        ).grid(row=0, column=1, sticky="w", padx=(0, GAP() + 2))
 
         tier = ""
         if entry.profile and entry.profile.rate_limit_tier:
             # "default_claude_max_20x" carries one bit of information: "max_20x".
             tier = entry.profile.rate_limit_tier.replace("default_claude_", "")
         tk.Label(
-            top, text=tier, bg=BG_CARD, fg=FG_MUTED, font=FONT_SMALL, anchor="w", width=9
+            top, text=tier, bg=BG_CARD, fg=FG_MUTED, font=FONT_SMALL(), anchor="w", width=9
         ).grid(row=0, column=2, sticky="w")
 
         if entry.duplicate_of:
             tk.Label(
                 top, text="duplicate of %s" % entry.duplicate_of, bg=BG_CARD,
-                fg=WARN, font=FONT_SMALL, anchor="e",
-            ).grid(row=0, column=3, sticky="e", padx=(GAP, 0))
+                fg=WARN, font=FONT_SMALL(), anchor="e",
+            ).grid(row=0, column=3, sticky="e", padx=(GAP(), 0))
         elif entry.enrolled_as:
             tk.Label(
                 top, text="monitored as %s" % entry.enrolled_as, bg=BG_CARD,
-                fg=OK, font=FONT_SMALL, anchor="e",
-            ).grid(row=0, column=3, sticky="e", padx=(GAP, GAP))
+                fg=OK, font=FONT_SMALL(), anchor="e",
+            ).grid(row=0, column=3, sticky="e", padx=(GAP(), GAP()))
             tk.Button(
                 top, text="Remove", command=lambda e=entry: self._remove(e),
-                bg=BG_TRACK, fg=FG, font=FONT_SMALL, relief="flat",
-                activebackground="#404040", activeforeground=FG, padx=8,
+                bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
+                activebackground="#404040", activeforeground=FG, padx=scale.px(8),
             ).grid(row=0, column=4, sticky="e")
         elif not entry.error:
             tk.Button(
                 top, text="Add to monitor", command=lambda e=entry: self._add(e),
-                bg=CORAL, fg="#1a1a1a", font=("Segoe UI", 8, "bold"), relief="flat",
+                bg=CORAL, fg="#1a1a1a", font=scale.font(11, bold=True), relief="flat",
                 activebackground="#e08670", activeforeground="#1a1a1a", padx=10,
-            ).grid(row=0, column=4, sticky="e", padx=(GAP, 0))
+            ).grid(row=0, column=4, sticky="e", padx=(GAP(), 0))
 
         tk.Label(
             row, text=str(entry.config_dir), bg=BG_CARD, fg=FG_MUTED,
-            font=FONT_SMALL, anchor="w",
-        ).pack(fill="x", padx=PAD, pady=(0, GAP))
+            font=FONT_SMALL(), anchor="w",
+        ).pack(fill="x", padx=PAD(), pady=(0, GAP()))
 
     # ---------------------------------------------------------------- actions
 
