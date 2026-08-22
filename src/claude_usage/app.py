@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from . import readonly_guard
+from . import __version__
 from .config import ConfigError, load_accounts
 from .formatting import (
     format_age,
@@ -138,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--accounts", type=Path, default=None)
     parser.add_argument("--interval", type=float, default=None)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--version", action="version",
+                        version="Clauculate " + __version__)
     parser.add_argument(
         "--once", action="store_true",
         help="poll every account once, print a text report, exit (no GUI)",
