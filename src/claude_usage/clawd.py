@@ -68,7 +68,7 @@ MOOD_CAPTIONS = {
     MOOD_STRAINED: "running low",
     MOOD_CRITICAL: "nearly out",
     MOOD_SLEEPING: "waiting",
-    MOOD_SAD: "needs attention",
+    MOOD_SAD: "check it",
 }
 
 

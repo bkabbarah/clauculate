@@ -150,6 +150,8 @@ def main() -> int:
     parser.add_argument("--shot", type=Path, default=None)
     parser.add_argument("--height", type=int, default=900)
     parser.add_argument("--width", type=int, default=1000)
+    parser.add_argument("--expand", type=int, default=None,
+                        help="1-based index of a card to expand")
     parser.add_argument("--scroll", type=float, default=0.0,
                         help="scroll fraction 0..1 before the screenshot")
     args = parser.parse_args()
@@ -163,6 +165,10 @@ def main() -> int:
     panel = Panel(root, poller, store=None)
     panel.show()
     panel.window.geometry("%dx%d+30+20" % (args.width, args.height))
+    if args.expand:
+        root.update_idletasks()
+        panel.refresh()
+        list(panel._cards.values())[args.expand - 1].toggle()
 
     if args.shot:
         def capture():

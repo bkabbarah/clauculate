@@ -116,6 +116,42 @@ class UsageSnapshot:
         values += [x.percent for x in self.limits if x.percent is not None]
         return max(values) if values else None
 
+    def headline_metrics(self) -> list[tuple[str, float | None, datetime | None]]:
+        """The few numbers worth showing on a collapsed row.
+
+        Session and weekly come from the flat windows when present, falling
+        back to the equivalent limits[] entries. The third slot is whichever
+        model-scoped cap is worst, which on Max is normally Fable.
+        """
+        out: list[tuple[str, float | None, datetime | None]] = []
+
+        def from_limit(kind: str):
+            for row in self.limits:
+                if row.kind == kind and not row.scope_label:
+                    return row
+            return None
+
+        session = self.window("five_hour") or from_limit("session")
+        if session is not None:
+            pct = getattr(session, "utilization", None)
+            if pct is None:
+                pct = getattr(session, "percent", None)
+            out.append(("5h", pct, session.resets_at))
+
+        weekly = self.window("seven_day") or from_limit("weekly_all")
+        if weekly is not None:
+            pct = getattr(weekly, "utilization", None)
+            if pct is None:
+                pct = getattr(weekly, "percent", None)
+            out.append(("week", pct, weekly.resets_at))
+
+        scoped = [r for r in self.limits if r.scope_label and r.percent is not None]
+        if scoped:
+            worst = max(scoped, key=lambda r: r.percent)
+            out.append((worst.scope_label, worst.percent, worst.resets_at))
+
+        return out
+
     @property
     def scoped_model_names(self) -> list[str]:
         """Model names the limits array reports scoped caps for (e.g. Fable)."""

@@ -1,50 +1,39 @@
 # Clauculate
 
-A system-tray app that shows rate-limit usage across several Claude accounts at
-once. It reads each account's usage and displays it. That is all it does.
+A Windows tray app that shows rate-limit usage across several Claude accounts.
+It reads each account's usage and displays it. Nothing else.
 
-![panel](shots/panel_clawd.png)
+![panel](shots/panel_collapsed.png)
 
----
+## Read this first
 
-## ⚠️ Read this first
+Clauculate depends on two undocumented endpoints: `/api/oauth/usage` for the
+numbers and `/api/oauth/profile` for account identity. Anthropic publishes
+neither, promises nothing about either, and can change or remove both without
+warning. On that day the app shows you errors and raw JSON instead of numbers.
 
-This app depends on two **undocumented endpoints** —
-**`/api/oauth/usage`** for the numbers and **`/api/oauth/profile`** for account
-identity. Neither is a published API, neither carries any
-compatibility promise, and Anthropic can change their shape, their auth
-requirements, or remove them entirely at any time and without notice. When that
-happens this app will show errors or raw JSON rather than numbers.
+It degrades rather than lies. When the response stops matching what the parser
+understands, the panel prints what arrived instead of coercing it into a
+plausible zero.
 
-The app is built to degrade rather than lie: an unrecognised response is
-rendered verbatim instead of being coerced into a plausible-looking zero.
-
----
-
-## What it will never do
-
-These are design constraints, not preferences:
+## What it refuses to do
 
 - **No inference.** It never calls a completion or messages endpoint.
-- **No writes to any Claude config directory.** Enforced at runtime, not just
-  by convention — see [The read-only guarantee](#the-read-only-guarantee).
-- **No credential refresh.** It reads `accessToken` and stops. It never
-  refreshes, rotates, or rewrites a token. If a token expires, it tells you to
-  re-run `claude` yourself.
-- **No account switching, routing, or load balancing.** The panel shows which
-  account has the most headroom because that is useful to *know*; the app never
-  acts on it.
-- **No impersonation.** It sends the real installed Claude Code version as its
-  User-Agent, read from the installed `package.json`.
-
----
+- **No writes to any Claude config directory.** A runtime guard enforces this.
+  See [The read-only guarantee](#the-read-only-guarantee).
+- **No credential refresh.** It reads `accessToken` and stops. When a token
+  expires it tells you to run `claude` yourself.
+- **No account switching or routing.** The panel names the account with the
+  most headroom because you want to know. The app never acts on it.
+- **No impersonation.** It sends the installed Claude Code version as its
+  User-Agent, read from that install's `package.json`.
 
 ## Setup
 
-### 1. Enroll each account in its own profile directory
+### 1. Give each account its own profile directory
 
-Claude Code stores credentials per `CLAUDE_CONFIG_DIR`. Each account needs its
-own directory. In PowerShell, one account at a time:
+Claude Code keeps credentials per `CLAUDE_CONFIG_DIR`. Point it somewhere new,
+sign in, and check who landed. One account at a time, in PowerShell:
 
 ```powershell
 $env:CLAUDE_CONFIG_DIR = "$env:USERPROFILE\.claude-work"
@@ -62,21 +51,26 @@ claude.cmd auth status --text
 $env:CLAUDE_CONFIG_DIR = $null
 ```
 
-Three things that will bite you:
+Three traps, in the order you will hit them:
 
-- **Sign out of claude.ai first, or use a private window.** The OAuth flow
-  reuses whatever browser session exists, so a second login silently re-grants
-  the *same* account. Step 3 exists to catch this — if the email echoed back
-  isn't the one you entered, redo the login with a clean browser session.
-- **Set `CLAUDE_CONFIG_DIR` before logging in.** Skip it and `auth login`
-  overwrites your default `~/.claude` profile, signing that account out.
-- **Use `claude.cmd`, not `claude`,** if PowerShell's execution policy blocks
-  `.ps1` scripts. The `.cmd` shim is not subject to execution policy.
+**Your browser hands back the wrong account.** The OAuth flow reuses whatever
+claude.ai session already exists, so your second login re-grants the first
+account and you end up with a duplicate. Sign out of claude.ai first, or run
+the login from a private window. Step 3 catches it: if the email that comes
+back differs from the one you typed, redo the login with a clean browser.
+
+**Forgetting step 1 signs you out.** Run `auth login` without setting
+`CLAUDE_CONFIG_DIR` and it overwrites your default `~/.claude` profile.
+
+**PowerShell blocks the `.ps1` shim.** On a default execution policy, `claude`
+fails to load. Call `claude.cmd`, which execution policy does not govern.
+
+The Accounts tab automates all of this once the app runs.
 
 ### 2. Write `accounts.json`
 
-Copy `accounts.json.example` and edit. Labels are yours to choose; forward
-slashes and `%USERPROFILE%` both work.
+Copy `accounts.json.example` and edit it. Forward slashes work, and so does
+`%USERPROFILE%`.
 
 ```json
 [
@@ -85,149 +79,137 @@ slashes and `%USERPROFILE%` both work.
 ]
 ```
 
-**No tokens go in this file.** The app reads each profile's credential store at
-poll time. It rejects a config containing a `token` key outright.
+Keep tokens out of this file. Clauculate reads each profile's credential store
+at poll time, and rejects any config carrying a `token` key.
 
-> One profile directory does **not** mean one account. Two directories can hold
-> two separate logins to the *same* account, which would double-count it and
-> waste rate limit on duplicate calls. Verify with
-> `claude.cmd auth status --text` per directory before listing them here.
+One account can own several profile directories. Two directories holding the
+same login double-count that account and burn its rate limit on duplicate
+calls. The Accounts tab flags this for you.
 
-### 3. Run
+### 3. Run it
 
 ```bash
 python run.py
 ```
 
-Or use the built `Clauculate.exe`. Useful flags:
+Grab `Clauculate.exe` from
+[Releases](https://github.com/bkabbarah/clauculate/releases) to skip the Python
+install. Flags worth knowing:
 
-- `--once` — poll every account once, print a text report, exit. No GUI.
-- `--accounts PATH` — use a different config file.
-- `--verbose` — debug logging to console and logfile.
-
----
+- `--once` prints a text report for every account and exits, no GUI.
+- `--accounts PATH` points at a different config file.
+- `--verbose` writes debug logging to the console and the logfile.
 
 ## What you get
 
-**Tray icon** — coloured by the worst utilization across all accounts: green
-under 50%, amber 50–80%, red above 80%. Hover for one line per account
-(`label: 5h% / weekly%`). Windows caps tooltips at 128 characters, so with many
-accounts the app truncates deliberately rather than letting Windows cut it off
-silently.
+**The tray icon** takes its colour from the worst utilization across your
+accounts: green below 50%, amber to 80%, red above. Hover for one line per
+account. Windows caps that tooltip at 128 characters, so Clauculate shortens
+long labels to keep every account visible, and says how many it dropped when
+even that fails.
 
-**Panel** — click the icon. One section per account, and within it a row for
-*every* key the endpoint returned, not just the recognised ones. Nothing is
-collapsed behind a toggle; the window resizes and scrolls in both directions
-instead.
+**The panel** opens when you click the icon. Each account collapses to one row
+carrying its session, weekly, and model-scoped numbers. Click a row to open
+everything the endpoint returned for that account, including keys this build
+has never seen.
 
-Each row shows: window name, utilization, a bar, `resets in 2h 14m`, and the
-absolute local time (`today 4:35 PM`). Every timestamp is converted from UTC
-using the OS timezone rules, so DST is handled correctly.
+![expanded](shots/panel_expanded.png)
 
-Per account you also get a freshness stamp (`updated 40s ago`, or a loud
-`STALE`/`never updated`), a 7-day sparkline built from local history, and a
-**Copy raw JSON** button for when the schema shifts under you.
+An expanded row gives you the reset clock two ways, `resets in 2h 14m` beside
+`tomorrow 5:15 AM`, converted from UTC through the OS timezone rules so DST
+lands right. It also carries a freshness stamp, a 7-day sparkline drawn from
+local history, and a **Copy raw JSON** button for the day the schema moves.
 
-**Clawd** — the pixel crab's pose tracks the account's real state, using sprite
-data ported from the `clawd-animation` skill. It is a second read on the same
-information, not decoration:
+**Clawd**, the pixel crab, reports the same state a second way. His pose tracks
+the account rather than decorating it:
 
 | Pose | Meaning |
 |---|---|
-| `plenty left` | under 25% |
-| `comfortable` | 25–50% |
-| `working` | 50–80% |
-| `running low` | 80–95% |
-| `nearly out` | 95%+ |
-| `waiting` | rate limited, or data is stale |
-| `needs attention` | auth, network, or shape failure |
+| plenty left | under 25% |
+| comfortable | 25 to 50% |
+| working | 50 to 80% |
+| running low | 80 to 95% |
+| nearly out | 95% and up |
+| waiting | rate limited, or the data went stale |
+| check it | auth, network, or shape failure |
 
----
+![clawd](shots/clawd_moods.png)
 
 ## The Accounts tab
 
 ![accounts](shots/accounts_tab.png)
 
-**Scan for profiles** finds every `~/.claude*` directory holding a credential
-store, asks `/api/oauth/profile` who each one belongs to, and shows the result.
-From there you can add a profile to the monitor or remove it, and the label is
-suggested from the email's local part.
+**Scan for profiles** walks every `~/.claude*` directory holding a credential
+store, asks `/api/oauth/profile` who owns each one, and lists what it found.
+Add a profile to the monitor or drop it, and Clauculate suggests a label from
+the email's local part.
 
-The thing this actually solves is that **a profile directory is not an
-account.** The same account can be signed in to several directories, which
-double-counts it and burns rate limit on duplicate polls. The tab dedupes on
-`account.uuid` and flags the extra folders in amber, so you can see it rather
-than discover it later in the numbers.
+The tab exists because a profile directory tells you nothing about which
+account lives in it. Clauculate dedupes on `account.uuid` and paints the extra
+folders amber, so you catch a doubled account on the screen rather than in your
+rate limit a week later.
 
-**It cannot sign you in**, and that is deliberate: logging in means handling a
-password and writing a credential file, neither of which this app does. What it
-removes is the tedium around the login — it builds the right command for your
-platform, copies it, and can open a terminal with `CLAUDE_CONFIG_DIR` already
-set. You run the login and approve it in the browser; Claude Code writes the
-credentials; the next Scan picks the profile up.
+**It cannot sign you in.** A login means handling your password and writing a
+credential file, and this app does neither. It builds the right command for
+your shell, copies it, and opens a terminal with `CLAUDE_CONFIG_DIR` set. You
+run the login and approve it in the browser. Claude Code writes the
+credentials. The next scan picks up the new profile.
 
-Adding or removing only ever edits `accounts.json`. **Remove** stops monitoring
-an account. It does not delete the folder, touch the login, or sign anything
-out.
+Add and Remove touch `accounts.json` and nothing else. Removing an account
+stops the polling. Your folder and your login survive untouched.
 
----
+## How it polls
 
-## Polling behaviour
+Clauculate never polls an account faster than every 180 seconds. `--interval`
+raises that floor and cannot lower it. It staggers accounts across the window
+so five of them never fire together, and it sends one request per poll with no
+retries, because retrying is what earns you a 429 in the first place.
 
-- Never faster than **180 seconds per account**. This is a floor, not a
-  default; `--interval` can only raise it.
-- Polls are **staggered** across accounts so N accounts never burst together.
-- On **HTTP 429**, per-account backoff of **3 → 6 → 12 → 15 minutes**, capped,
-  honouring a longer `Retry-After` when the server sends one. The panel shows
-  the live countdown, and any figures still on screen are explicitly labelled as
-  coming from the last good poll rather than being passed off as current.
-- One request per poll. No retries — retrying is what gets you rate limited.
+When a 429 does arrive, that account backs off for 3 minutes, then 6, then 12,
+then 15 as a ceiling, and honours a longer `Retry-After` when the server sends
+one. The row shows the countdown and marks any figures still on screen as
+coming from the last good poll.
 
-Every outcome is written to a rotating logfile under
+Every outcome lands in a rotating logfile at
 `%LOCALAPPDATA%\Clauculate\monitor.log`.
-
----
 
 ## History
 
-The endpoint returns a snapshot only, so history is accumulated locally in
-`%LOCALAPPDATA%\Clauculate\history.sqlite3`. Every successful poll
-writes one row per window and per `limits[]` entry. Rows older than **90 days**
-are pruned at startup and once a day thereafter.
-
----
+The endpoint returns a snapshot with no past, so Clauculate builds its own in
+`%LOCALAPPDATA%\Clauculate\history.sqlite3`. Each successful poll writes a row
+per window and per `limits[]` entry. Rows older than 90 days get pruned at
+startup and once a day after that.
 
 ## The read-only guarantee
 
-The claim is that this app never writes to a Claude config directory. That is
-enforced three ways:
+Clauculate claims it never writes inside a Claude config directory. Three
+things back that up.
 
-**1. At runtime.** `readonly_guard` replaces `builtins.open` and `os.open`
-before anything touches the filesystem. Any write-mode call resolving inside a
-protected root raises `ReadOnlyViolation`. Protected roots are every configured
-`config_dir`, plus `~/.claude`, plus every `~/.claude*` directory found at
-startup.
+**A runtime guard.** `readonly_guard` replaces `builtins.open` and `os.open`
+before anything opens a file. Any write-mode call landing inside a protected
+root raises `ReadOnlyViolation`. Protected roots cover every configured
+`config_dir` plus every `~/.claude*` directory present at startup.
 
-**2. By never shelling out to `claude`.** Worth stating because it is not
-obvious: running `claude mcp list` against an empty config dir *creates* a
-`.claude.json` in it. So the app reads `.credentials.json` directly and derives
-its User-Agent from the installed `package.json` rather than from
-`claude --version`.
+**No shelling out to the CLI.** Running `claude mcp list` against an empty
+config dir creates a `.claude.json` inside it. Clauculate reads
+`.credentials.json` from disk and takes its User-Agent from the installed
+`package.json`, so it never launches the binary.
 
-**3. By test.** `tools/verify.py` hashes every file under every configured
-config directory (contents **and** mtime), runs a full live poll cycle,
-re-hashes, and diffs. It then attempts a real write and asserts it is blocked.
+**A test that checks.** `tools/verify.py` hashes every file under every
+configured config directory, contents and mtime both, runs a live poll cycle,
+hashes again, and diffs. Then it attempts a write and asserts the guard stopped
+it.
 
 ```bash
 python tools/verify.py
 ```
 
-Result on the development machine, 5 accounts configured:
+On the development machine with 5 accounts configured:
 
 ```
 [1] read-only guarantee
-      hashed 2877 files across 5 config dirs
-  PASS   no file contents or mtimes changed (2877 checked)
+      hashed 2879 files across 5 config dirs
+  PASS   no file contents or mtimes changed (2879 checked)
   PASS   no files created in any config dir
   PASS   no files removed from any config dir
   PASS   guard raised ReadOnlyViolation on an explicit write attempt
@@ -239,17 +221,15 @@ Result on the development machine, 5 accounts configured:
 32 checks, 0 failed
 ```
 
-The suite also covers the 429 backoff schedule, DST conversion across a
+The same suite covers the 429 backoff schedule, DST conversion across a
 spring-forward boundary, an invented window key the code has never seen, and
-six malformed-response shapes.
+six malformed responses.
 
----
+## The response, as observed
 
-## The response schema, as actually observed
-
-Captured 2026-08-21 from Claude Code 2.1.239 on a Max plan. **The published
-description of this endpoint is out of date** — the live response contains a
-`limits[]` array and a `spend` block that most write-ups omit.
+Captured 2026-08-21 from Claude Code 2.1.239 on a Max plan. The schema most
+write-ups describe is out of date: the live response carries a `limits[]` array
+and a `spend` block that they omit.
 
 ```jsonc
 {
@@ -257,7 +237,7 @@ description of this endpoint is out of date** — the live response contains a
                   "used_dollars": null, "remaining_dollars": null },
   "seven_day":  { "utilization": 48.0, "resets_at": "...", ... },
 
-  // Present but null on this plan. Names are as returned.
+  // Present, null on this plan. Names as returned.
   "seven_day_opus": null, "seven_day_sonnet": null, "seven_day_oauth_apps": null,
   "seven_day_cowork": null, "seven_day_omelette": null, "tangelo": null,
   "iguana_necktie": null, "omelette_promotional": null, "cinder_cove": null,
@@ -286,71 +266,63 @@ description of this endpoint is out of date** — the live response contains a
 }
 ```
 
-Ten of the fourteen top-level window keys were `null`. Several are evidently
-internal codenames. **This is precisely why keys are enumerated dynamically:**
-a key that ships tomorrow renders with no code change.
+Ten of the fourteen top-level window keys came back null, several under
+internal codenames. Hard-coding that list would break on the next release, so Clauculate
+enumerates keys at runtime and renders whatever arrives.
 
-### How keys are classified
+### How it sorts the keys
 
-Nothing is matched by name. Classification is by shape:
+Shape decides, never the name:
 
 | Shape | Rendered as |
 |---|---|
-| dict with **both** `utilization` and `resets_at` | a window row with a bar |
-| list of dicts containing `percent` or `kind` | limit rows, with scope labels |
+| dict carrying both `utilization` and `resets_at` | a window row with a bar |
+| list of dicts carrying `percent` or `kind` | limit rows, with scope labels |
 | any other dict or list | a flattened key/value block |
-| a scalar | a single key/value row |
+| a scalar | one key/value row |
 | `null` | listed under "reported but null" |
 
-The `utilization` + `resets_at` pair matters: `extra_usage` also has a
-`utilization` key but no reset clock, and belongs in its own block.
+Requiring both `utilization` and `resets_at` matters. `extra_usage` carries a
+`utilization` key with no reset clock, and belongs in its own block.
 
 ### Fable
 
-**Fable *is* separately exposed** — but not as a top-level window key, which is
-where the original spec expected it. It appears in `limits[]` as
-`kind: "weekly_scoped"` with `scope.model.display_name: "Fable"`, carrying its
-own `percent`, `severity`, and `resets_at`. The app renders it as its own row
-under LIMITS, exactly like any other limit.
+The endpoint does expose Fable, inside `limits[]` rather than as a top-level
+window key. Look for `kind: "weekly_scoped"` with
+`scope.model.display_name: "Fable"`, carrying its own `percent`, `severity`,
+and `resets_at`. Clauculate gives it a row under LIMITS like any other limit.
 
-One thing the endpoint does **not** tell you: whether that percentage is of a
-Fable-specific sub-cap or of the whole weekly pool. The app therefore states
-that the figure is of the model's scoped cap and does not editorialise further.
-No relationship between the Fable percentage and the weekly percentage is
-inferred or displayed, because none is exposed.
+What the endpoint withholds: whether that percentage measures a Fable sub-cap
+or the whole weekly pool. Clauculate reports it as the model's scoped cap and
+draws no further conclusion. It infers no relationship between the Fable number
+and the weekly number, because the endpoint exposes none.
 
-If a future response contains no model-scoped entry, the panel says so
-explicitly rather than inventing a Fable row.
-
----
+Should a future response omit the scoped entry, the panel says so rather than
+inventing a Fable row.
 
 ## Platform support
 
-**Windows: built and verified.** Everything in this README was run on Windows
-11 with Claude Code 2.1.239.
+**Windows works.** Everything here ran on Windows 11 with Claude Code 2.1.239.
 
-**macOS and Linux: partially portable, not verified.** The core — response
-parsing, polling, backoff, history, the read-only guard, the verification suite
-— is plain Python and platform-agnostic. Paths resolve correctly per platform
-(`~/Library/Application Support` on macOS, `$XDG_DATA_HOME` on Linux), and the
-Accounts tab emits shell-appropriate commands and opens Terminal.app on macOS.
+**macOS and Linux remain unverified.** Response parsing, polling, backoff,
+history, the read-only guard, and the test suite are plain Python and carry
+over. Paths resolve per platform, and the Accounts tab emits shell-appropriate
+commands and opens Terminal.app on macOS.
 
-Three things would need checking on a Mac before claiming it works, and none of
-them can be checked from Windows:
+Someone with a Mac needs to check three things before anyone claims it runs:
 
-1. **Where credentials live.** This app reads `.credentials.json` from the
-   profile directory. Claude Code's `--bare` flag documents skipping "keychain
-   reads", which suggests macOS may store OAuth tokens in the **login
-   Keychain** instead of a file. If so, `credentials.py` needs a Keychain
-   reader before anything works at all. This is the blocker.
-2. **Tray threading.** `pystray`'s macOS backend must run on the main thread,
-   but so must Tk. The current design (Tk on main, tray on a worker) is
-   Windows/Linux-shaped and would need inverting.
-3. **PyInstaller cannot cross-compile.** A `.app` has to be built on a Mac.
+1. **Where the credentials live.** Clauculate reads `.credentials.json` from
+   the profile directory. Claude Code's `--bare` flag documents skipping
+   "keychain reads", which suggests macOS keeps OAuth tokens in the login
+   Keychain instead of a file. If so, `credentials.py` needs a Keychain reader
+   before anything works. This blocks the rest.
+2. **Tray threading.** The macOS `pystray` backend wants the main thread, and
+   so does Tk. Today Tk owns main and the tray runs on a worker, which suits
+   Windows and Linux.
+3. **The build.** PyInstaller cannot cross-compile, so a `.app` comes off a
+   Mac.
 
-Pull requests welcome; please do not assume it works because it imports.
-
----
+Pull requests welcome. A clean import proves nothing.
 
 ## Building the exe
 
@@ -358,10 +330,8 @@ Pull requests welcome; please do not assume it works because it imports.
 python -m PyInstaller --noconfirm Clauculate.spec
 ```
 
-Output lands in `dist/Clauculate.exe`. Keep `accounts.json` next to the
-exe; it is read at runtime, not bundled.
-
----
+`dist/Clauculate.exe` comes out the other side. Keep `accounts.json` beside the
+exe, which reads it at runtime rather than bundling it.
 
 ## Layout
 
@@ -369,26 +339,28 @@ exe; it is read at runtime, not bundled.
 run.py                     entry point
 accounts.json.example      config template
 src/claude_usage/
-  readonly_guard.py        open()/os.open() interception
+  readonly_guard.py        open() and os.open() interception
   credentials.py           read-only credential access, token never logged
   poller.py                HTTP, staggering, TTL floor, 429 backoff
   model.py                 shape-based classification of the response
   panel.py                 the detail window
+  accounts_tab.py          profile discovery and enrollment
+  profile.py               account identity and duplicate detection
   tray.py                  tray icon and tooltip
   clawd.py                 sprite data and mood mapping
   store.py                 SQLite history
-  profile.py               account identity and duplicate detection
-  accounts_tab.py          the Accounts tab
 tools/
   verify.py                the verification suite
   demo_panel.py            render the panel with synthetic accounts
   demo_accounts.py         render the Accounts tab (--redact for screenshots)
 ```
 
----
-
 ## Credits
 
-Clawd sprite data (body matrix, eye variants, anchors, `#CD6E58`) is ported
-from the `clawd-animation` skill's `template.html`. The skill renders to an
-HTML canvas; this app draws the same pixel grid onto a Tk canvas.
+Clawd comes from the [clawd-animation skill](https://mmguo.dev/clawd/) by
+mmguo. Clauculate ports the sprite data, the body matrix, eye variants,
+anchors, and `#CD6E58`, onto a Tk canvas. The skill draws the same pixel grid
+to an HTML canvas.
+
+This README follows [stop-slop](https://github.com/hvpandya/stop-slop) by
+Hardik Pandya.
