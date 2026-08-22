@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import sys
 import threading
 import tkinter as tk
@@ -76,6 +77,10 @@ class AccountsTab:
         self._scanning = False
         self.editing: str | None = None
         self.login = None
+        self._auto_opened = False
+        self._login_started = 0.0
+        self._login_tick_job = None
+        self._login_base = ""
         self._build()
 
     # ------------------------------------------------------------------ build
@@ -260,7 +265,11 @@ class AccountsTab:
 
         self.signin_button.configure(state="disabled", text="Signing in...")
         self._login_message("Starting Claude Code's sign-in...", FG_DIM)
+        self._auto_opened = False
+        self._login_started = time.time()
         self._build_login_actions(running=True)
+        if self._login_tick_job is None:
+            self._tick_login()
 
         self.login = enroll.LoginSession(
             config_dir=target,
@@ -319,9 +328,9 @@ class AccountsTab:
 
         tk.Button(
             self.login_actions, text="Cancel", command=self._cancel_login,
-            bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL(), relief="flat",
-            activebackground=BG_TRACK, activeforeground=FG,
-            padx=scale.px(8), pady=scale.px(3), bd=0, highlightthickness=0,
+            bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
+            activebackground="#5a3030", activeforeground=FG,
+            padx=scale.px(12), pady=scale.px(3), bd=0, highlightthickness=0,
         ).pack(side="left")
 
     def _on_login_event(self, state: str, detail: str) -> None:
@@ -337,9 +346,32 @@ class AccountsTab:
                     pass
 
         if state == enroll.State.BROWSER:
+            # Open the private window ourselves. Claude Code has already opened
+            # a normal tab, and that tab is exactly the one that hands back a
+            # cached account, so waiting for a click would defeat the point.
+            if not self._auto_opened:
+                self._auto_opened = True
+                browser = enroll.open_private(session.url or "")
+                if browser:
+                    try:
+                        self.private_button.configure(text="Reopen private window")
+                    except tk.TclError:
+                        pass
+                    self._login_message(
+                        "A private window opened in %s. Sign in there with the "
+                        "account you want, and ignore the other tab: that one "
+                        "uses whichever account your browser already has."
+                        % browser, FG_DIM)
+                    return
+                self._login_message(
+                    "No private-capable browser found, so your normal browser "
+                    "window was used. It may sign in as an account you are "
+                    "already signed into. Copy link to open it privately "
+                    "yourself.", WARN)
+                return
             self._login_message(
-                "Approve the sign-in in your browser. If it shows the wrong "
-                "account, use Open private window.", FG_DIM)
+                "Waiting for you to approve the sign-in in the private window.",
+                FG_DIM)
         elif state == enroll.State.CODE:
             try:
                 self.code_entry.configure(state="normal")
@@ -396,10 +428,37 @@ class AccountsTab:
         self.dir_var.set(self._suggest_folder())
 
     def _login_message(self, text: str, colour: str) -> None:
+        self._login_base = text
+        self._login_colour = colour
         try:
             self.login_status.configure(text=text, fg=colour)
         except tk.TclError:
             pass
+
+    def _tick_login(self) -> None:
+        """Show how long the sign-in has been waiting, and how to get out.
+
+        Closing the browser tab leaves the child process waiting on stdin with
+        nothing to report, so without this the panel looks locked up.
+        """
+        session = self.login
+        if session is None or session.state in (
+            enroll.State.DONE, enroll.State.FAILED, enroll.State.CANCELLED
+        ):
+            self._login_tick_job = None
+            return
+
+        waited = int(time.time() - self._login_started)
+        hint = ""
+        if waited > 12:
+            hint = "   ·   waiting %ds. Closed the tab? Reopen private window, or Cancel." % waited
+        try:
+            self.login_status.configure(
+                text=self._login_base + hint, fg=self._login_colour
+            )
+        except tk.TclError:
+            pass
+        self._login_tick_job = self.frame.after(1000, self._tick_login)
 
     def _open_private(self) -> None:
         session = self.login
