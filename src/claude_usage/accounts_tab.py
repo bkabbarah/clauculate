@@ -1,13 +1,12 @@
 """The Accounts tab: discover profiles, enroll them, spot duplicates.
 
-Boundary that matters: this tab never logs anyone in. It cannot -- signing in
-means handling a password and writing a credential file, which this app does
-not do. What it does is remove the tedium around the login: it works out the
-right command, hands it to you, and can open a terminal with CLAUDE_CONFIG_DIR
-already set. You run the login; Claude Code writes the credentials; this tab
-notices the new profile on the next scan.
+Sign-in runs in the app now. Clauculate starts Claude Code's own `auth login`
+with CLAUDE_CONFIG_DIR set, relays what it prints, opens the approval page in a
+private window, and takes the pasted code. Your password never reaches this
+app, and Claude Code writes its own credential store.
 
-It only ever writes accounts.json, which is this app's own config.
+Clauculate's own process still writes nothing inside a Claude directory;
+readonly_guard enforces that. Of this app's files, only accounts.json changes.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from pathlib import Path
 from tkinter import ttk
 from typing import Any
 
-from . import clawd, scale
+from . import clawd, enroll, scale
 from .profile import discover, suggest_labels
 
 BG = "#171717"
@@ -76,6 +75,7 @@ class AccountsTab:
         self.labels: dict[str, str] = {}
         self._scanning = False
         self.editing: str | None = None
+        self.login = None
         self._build()
 
     # ------------------------------------------------------------------ build
@@ -124,67 +124,317 @@ class AccountsTab:
     def _build_add_section(self) -> None:
         box = tk.Frame(self.frame, bg=BG_CARD)
         box.pack(fill="x", padx=PAD(), pady=(0, PAD()))
+        self.add_box = box
 
         tk.Label(
-            box, text="ADD A NEW ACCOUNT", bg=BG_CARD, fg=FG_MUTED, font=FONT_SECTION()
-        ).pack(anchor="w", padx=PAD(), pady=(GAP(), 2))
+            box, text="ADD AN ACCOUNT", bg=BG_CARD, fg=FG_MUTED,
+            font=FONT_SECTION(),
+        ).pack(anchor="w", padx=PAD(), pady=(GAP(), scale.px(2)))
 
         tk.Label(
             box,
             text=(
-                "This app cannot sign you in -- that needs your password, which it "
-                "never handles. It prepares the command; you run the login and "
-                "approve it in the browser."
+                "Clauculate never sees your password. It starts Claude Code's "
+                "own sign-in, you approve it in the browser, and Claude Code "
+                "writes its own credentials."
             ),
             bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL(),
-            wraplength=900, justify="left", anchor="w",
+            wraplength=scale.px(620), justify="left", anchor="w",
         ).pack(fill="x", padx=PAD())
 
         form = tk.Frame(box, bg=BG_CARD)
         form.pack(fill="x", padx=PAD(), pady=GAP())
 
         tk.Label(
-            form, text="Profile folder", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
+            form, text="Folder", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
         ).grid(row=0, column=0, sticky="w", padx=(0, GAP()))
-        self.dir_var = tk.StringVar(value=".claude-new")
+        self.dir_var = tk.StringVar(value=self._suggest_folder())
         tk.Entry(
-            form, textvariable=self.dir_var, width=26, bg="#141414", fg=FG,
+            form, textvariable=self.dir_var, width=20, bg="#141414", fg=FG,
             insertbackground=FG, relief="flat", font=FONT_MONO(),
         ).grid(row=0, column=1, sticky="w", padx=(0, PAD()))
 
         tk.Label(
-            form, text="Email", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
+            form, text="Email (optional)", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL()
         ).grid(row=0, column=2, sticky="w", padx=(0, GAP()))
         self.email_var = tk.StringVar(value="")
         tk.Entry(
-            form, textvariable=self.email_var, width=30, bg="#141414", fg=FG,
+            form, textvariable=self.email_var, width=26, bg="#141414", fg=FG,
             insertbackground=FG, relief="flat", font=FONT_MONO(),
-        ).grid(row=0, column=3, sticky="w")
+        ).grid(row=0, column=3, sticky="w", padx=(0, PAD()))
 
-        buttons = tk.Frame(box, bg=BG_CARD)
-        buttons.pack(fill="x", padx=PAD(), pady=(0, GAP()))
-        for text, command in (
-            ("Copy login command", self._copy_command),
-            ("Open terminal here" if not IS_WINDOWS else "Open PowerShell here",
-             self._open_terminal),
-        ):
-            tk.Button(
-                buttons, text=text, command=command, bg=BG_TRACK, fg=FG,
-                font=FONT_SMALL(), relief="flat", activebackground="#404040",
-                activeforeground=FG, padx=scale.px(10), pady=scale.px(3),
-            ).pack(side="left", padx=(0, GAP()))
+        self.signin_button = tk.Button(
+            form, text="Sign in", command=self._start_login, bg=CORAL,
+            fg="#1a1a1a", font=scale.font(11, bold=True), relief="flat",
+            activebackground="#e08670", activeforeground="#1a1a1a",
+            padx=scale.px(14), pady=scale.px(3), bd=0, highlightthickness=0,
+        )
+        self.signin_button.grid(row=0, column=4, sticky="w")
 
-        self.add_hint = tk.Label(
+        # Live status for a running sign-in.
+        self.login_status = tk.Label(
+            box, text="", bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL(),
+            anchor="w", justify="left", wraplength=scale.px(660),
+        )
+        self.login_status.pack(fill="x", padx=PAD())
+
+        self.login_actions = tk.Frame(box, bg=BG_CARD)
+
+        tk.Label(
             box,
             text=(
-                "Sign out of claude.ai first, or use a private window -- otherwise "
-                "the browser silently re-grants the account you are already signed "
-                "in as, and you get a duplicate."
+                "The email only prefills the page. Your browser decides which "
+                "account signs in, so a cached session can hand back a different "
+                "one. Clauculate opens a private window to avoid that, and "
+                "always checks who it actually got."
             ),
             bg=BG_CARD, fg=WARN, font=FONT_SMALL(),
-            wraplength=900, justify="left", anchor="w",
+            wraplength=scale.px(660), justify="left", anchor="w",
+        ).pack(fill="x", padx=PAD(), pady=(GAP(), 0))
+
+        manual = tk.Label(
+            box, text="show the manual command", bg=BG_CARD, fg=FG_MUTED,
+            font=FONT_SMALL(), cursor="hand2", anchor="w",
         )
-        self.add_hint.pack(fill="x", padx=PAD(), pady=(0, PAD()))
+        manual.pack(anchor="w", padx=PAD(), pady=(scale.px(4), PAD()))
+        manual.bind("<Button-1>", self._toggle_manual)
+        self.manual_label = manual
+        self.manual_box = tk.Frame(box, bg=BG_CARD)
+        self.manual_open = False
+
+    def _suggest_folder(self) -> str:
+        """A folder name that is not taken yet."""
+        base = ".claude-"
+        existing = {e.name for e in self.entries} if self.entries else set()
+        for n in range(2, 40):
+            candidate = "%s%d" % (base, n)
+            if candidate not in existing and not (Path.home() / candidate).exists():
+                return candidate
+        return ".claude-new"
+
+    def _toggle_manual(self, _event=None) -> None:
+        self.manual_open = not self.manual_open
+        if self.manual_open:
+            for child in self.manual_box.winfo_children():
+                child.destroy()
+            command = login_command(self._target_dir(), self.email_var.get().strip()
+                                    or "you@example.com")
+            body = tk.Text(
+                self.manual_box, height=3, bg="#141414", fg=FG_DIM,
+                font=scale.font(11, mono=True), relief="flat", wrap="word",
+            )
+            body.insert("1.0", command)
+            body.configure(state="disabled")
+            body.pack(fill="x")
+            tk.Button(
+                self.manual_box, text="Copy", command=self._copy_command,
+                bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
+                activebackground="#404040", activeforeground=FG,
+                padx=scale.px(9), pady=scale.px(2), bd=0, highlightthickness=0,
+            ).pack(anchor="w", pady=(scale.px(4), 0))
+            self.manual_box.pack(fill="x", padx=PAD(), pady=(0, PAD()))
+            self.manual_label.configure(text="hide the manual command", fg=CORAL)
+        else:
+            self.manual_box.pack_forget()
+            self.manual_label.configure(text="show the manual command", fg=FG_MUTED)
+
+    # ------------------------------------------------------------- sign-in
+
+    def _start_login(self) -> None:
+        if self.login is not None and self.login.state not in (
+            enroll.State.DONE, enroll.State.FAILED, enroll.State.CANCELLED
+        ):
+            return
+
+        target = self._target_dir()
+        if target.exists() and (target / ".credentials.json").exists():
+            self._login_message(
+                "%s already holds a sign-in. Pick another folder name."
+                % target.name, WARN)
+            return
+
+        known = {}
+        for entry in self.entries:
+            if entry.profile and entry.profile.identity and entry.enrolled_as:
+                known[entry.profile.identity] = entry.enrolled_as
+
+        self.signin_button.configure(state="disabled", text="Signing in...")
+        self._login_message("Starting Claude Code's sign-in...", FG_DIM)
+        self._build_login_actions(running=True)
+
+        self.login = enroll.LoginSession(
+            config_dir=target,
+            email=self.email_var.get().strip(),
+            on_event=lambda state, detail: self.frame.after(
+                0, lambda: self._on_login_event(state, detail)
+            ),
+            user_agent=getattr(self.state, "user_agent", ""),
+            known_identities=known,
+        )
+        threading.Thread(target=self.login.start, daemon=True).start()
+
+    def _build_login_actions(self, running: bool) -> None:
+        for child in self.login_actions.winfo_children():
+            child.destroy()
+        if not running:
+            self.login_actions.pack_forget()
+            return
+        self.login_actions.pack(fill="x", padx=PAD(), pady=(GAP(), 0))
+
+        self.private_button = tk.Button(
+            self.login_actions, text="Open private window",
+            command=self._open_private, bg=BG_TRACK, fg=FG, font=FONT_SMALL(),
+            relief="flat", activebackground="#404040", activeforeground=FG,
+            padx=scale.px(10), pady=scale.px(3), bd=0, highlightthickness=0,
+            state="disabled",
+        )
+        self.private_button.pack(side="left", padx=(0, GAP()))
+
+        self.copy_link_button = tk.Button(
+            self.login_actions, text="Copy link", command=self._copy_link,
+            bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
+            activebackground="#404040", activeforeground=FG,
+            padx=scale.px(10), pady=scale.px(3), bd=0, highlightthickness=0,
+            state="disabled",
+        )
+        self.copy_link_button.pack(side="left", padx=(0, GAP()))
+
+        self.code_var = tk.StringVar(value="")
+        self.code_entry = tk.Entry(
+            self.login_actions, textvariable=self.code_var, width=26,
+            bg="#141414", fg=FG, insertbackground=FG, relief="flat",
+            font=FONT_MONO(), state="disabled",
+        )
+        self.code_entry.pack(side="left", padx=(0, GAP()))
+        self.code_entry.bind("<Return>", lambda _e: self._submit_code())
+
+        self.code_button = tk.Button(
+            self.login_actions, text="Submit code", command=self._submit_code,
+            bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
+            activebackground="#404040", activeforeground=FG,
+            padx=scale.px(10), pady=scale.px(3), bd=0, highlightthickness=0,
+            state="disabled",
+        )
+        self.code_button.pack(side="left", padx=(0, GAP()))
+
+        tk.Button(
+            self.login_actions, text="Cancel", command=self._cancel_login,
+            bg=BG_CARD, fg=FG_DIM, font=FONT_SMALL(), relief="flat",
+            activebackground=BG_TRACK, activeforeground=FG,
+            padx=scale.px(8), pady=scale.px(3), bd=0, highlightthickness=0,
+        ).pack(side="left")
+
+    def _on_login_event(self, state: str, detail: str) -> None:
+        session = self.login
+        if session is None:
+            return
+
+        if session.url:
+            for button in (self.private_button, self.copy_link_button):
+                try:
+                    button.configure(state="normal")
+                except tk.TclError:
+                    pass
+
+        if state == enroll.State.BROWSER:
+            self._login_message(
+                "Approve the sign-in in your browser. If it shows the wrong "
+                "account, use Open private window.", FG_DIM)
+        elif state == enroll.State.CODE:
+            try:
+                self.code_entry.configure(state="normal")
+                self.code_button.configure(state="normal")
+                self.code_entry.focus_set()
+            except tk.TclError:
+                pass
+            self._login_message("Paste the code from your browser: " + detail, FG_DIM)
+        elif state in (enroll.State.LAUNCHING, enroll.State.FINISHING,
+                       enroll.State.VERIFYING):
+            self._login_message(detail, FG_DIM)
+        elif state == enroll.State.CANCELLED:
+            self._end_login("Sign-in cancelled. Nothing was changed.", FG_DIM)
+        elif state in (enroll.State.DONE, enroll.State.FAILED):
+            self._complete_login(session)
+
+    def _complete_login(self, session) -> None:
+        result = session.result
+        if result is None:
+            self._end_login("Sign-in ended unexpectedly.", BAD)
+            return
+
+        if not result.ok:
+            self._end_login(result.message, BAD if not result.duplicate_of else WARN)
+            self.scan()
+            return
+
+        # Enroll it, using the account's own email for the label.
+        label = None
+        if result.profile is not None:
+            label = result.profile.local_part
+        label = label or session.config_dir.name.lstrip(".")
+
+        data = self._load_raw()
+        existing = {str(i.get("label")) for i in data if isinstance(i, dict)}
+        unique, n = label, 2
+        while unique in existing:
+            unique, n = "%s-%d" % (label, n), n + 1
+        data.append({"label": unique, "config_dir": str(session.config_dir)})
+
+        if self._save_raw(data):
+            self._end_login("%s Monitoring it as \"%s\"." % (result.message, unique), OK)
+        else:
+            self._end_login(result.message + " Could not write accounts.json.", WARN)
+        self.scan()
+
+    def _end_login(self, message: str, colour: str) -> None:
+        self._login_message(message, colour)
+        self._build_login_actions(running=False)
+        try:
+            self.signin_button.configure(state="normal", text="Sign in")
+        except tk.TclError:
+            pass
+        self.dir_var.set(self._suggest_folder())
+
+    def _login_message(self, text: str, colour: str) -> None:
+        try:
+            self.login_status.configure(text=text, fg=colour)
+        except tk.TclError:
+            pass
+
+    def _open_private(self) -> None:
+        session = self.login
+        if session is None or not session.url:
+            return
+        browser = enroll.open_private(session.url)
+        if browser:
+            self._login_message(
+                "Opened a private window in %s. Sign in there with the account "
+                "you want." % browser, FG_DIM)
+        else:
+            self._login_message(
+                "No private-window browser found. Use Copy link and open it in "
+                "a private window yourself.", WARN)
+
+    def _copy_link(self) -> None:
+        session = self.login
+        if session is None or not session.url:
+            return
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(session.url)
+        self._login_message("Sign-in link copied.", FG_DIM)
+
+    def _submit_code(self) -> None:
+        if self.login is None:
+            return
+        code = self.code_var.get().strip()
+        if not code:
+            return
+        self.login.submit_code(code)
+        self.code_var.set("")
+
+    def _cancel_login(self) -> None:
+        if self.login is not None:
+            self.login.cancel()
 
     # ------------------------------------------------------------------- scan
 

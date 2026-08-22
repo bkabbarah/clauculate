@@ -30,10 +30,26 @@ plausible zero.
 
 ## Setup
 
-### 1. Give each account its own profile directory
+### 1. Add your accounts
 
-Claude Code keeps credentials per `CLAUDE_CONFIG_DIR`. Point it somewhere new,
-sign in, and check who landed. One account at a time, in PowerShell:
+Open the Accounts tab, type a folder name, and press **Sign in**. Clauculate
+starts Claude Code's own `auth login` with `CLAUDE_CONFIG_DIR` pointed at that
+folder, opens the approval page in a **private browser window**, takes the
+pasted code if one is asked for, and checks which account arrived.
+Your password never reaches this app.
+
+The private window matters more than it sounds. `--email` only prefills the
+page as a `login_hint`; whichever account your browser has cached wins. Signing
+in through a normal window is how one account ends up enrolled three times
+under different folders. Clauculate opens a clean window, and verifies the
+result either way: if it got an account you already monitor, it says so and
+keeps it out of `accounts.json`.
+
+<details>
+<summary>Doing it by hand instead</summary>
+
+The app shows this command too, under "show the manual command". In PowerShell,
+one account at a time:
 
 ```powershell
 $env:CLAUDE_CONFIG_DIR = "$env:USERPROFILE\.claude-work"
@@ -51,21 +67,13 @@ claude.cmd auth status --text
 $env:CLAUDE_CONFIG_DIR = $null
 ```
 
-Three traps, in the order you will hit them:
+Three traps. Your browser hands back whatever account it has cached, so sign
+out of claude.ai first or use a private window, and check step 3. Forgetting
+step 1 overwrites your default `~/.claude` profile and signs that account out.
+And on a default execution policy PowerShell blocks the `.ps1` shim, so call
+`claude.cmd`.
 
-**Your browser hands back the wrong account.** The OAuth flow reuses whatever
-claude.ai session already exists, so your second login re-grants the first
-account and you end up with a duplicate. Sign out of claude.ai first, or run
-the login from a private window. Step 3 catches it: if the email that comes
-back differs from the one you typed, redo the login with a clean browser.
-
-**Forgetting step 1 signs you out.** Run `auth login` without setting
-`CLAUDE_CONFIG_DIR` and it overwrites your default `~/.claude` profile.
-
-**PowerShell blocks the `.ps1` shim.** On a default execution policy, `claude`
-fails to load. Call `claude.cmd`, which execution policy does not govern.
-
-The Accounts tab automates all of this once the app runs.
+</details>
 
 ### 2. Write `accounts.json`
 
@@ -173,11 +181,15 @@ Click any alias to rename it. The rename rewrites `accounts.json` and carries
 that account's history rows with it, because history is keyed by label and
 would otherwise be orphaned.
 
-**It cannot sign you in.** A login means handling your password and writing a
-credential file, and this app does neither. It builds the right command for
-your shell, copies it, and opens a terminal with `CLAUDE_CONFIG_DIR` set. You
-run the login and approve it in the browser. Claude Code writes the
-credentials. The next scan picks up the new profile.
+**Sign in** runs the whole enrollment in the app. Clauculate never sees your
+password: it launches Claude Code's own login, relays what that process says,
+opens the approval page in a private window, and passes back the code you
+paste. Claude Code writes its own credentials, and the new account is added to
+`accounts.json` with a label taken from its email.
+
+It reports the account it got rather than the one you asked for. Ask for one
+email and approve another and it tells you. Sign in as an account you already
+monitor and it refuses to add the duplicate and explains why.
 
 Add, Remove and rename touch `accounts.json` and nothing else. Removing an
 account stops the polling. Your folder and your login survive untouched.
@@ -220,6 +232,11 @@ startup and once a day after that.
 
 Clauculate claims it never writes inside a Claude config directory. Three
 things back that up.
+
+One honest exception, stated up front: pressing **Sign in** launches Claude
+Code's own `auth login`, and that process writes its own credential store.
+Clauculate's process still writes nothing there, the guard below still blocks
+it, and nothing happens without you pressing the button.
 
 **A runtime guard.** `readonly_guard` replaces `builtins.open` and `os.open`
 before anything opens a file. Any write-mode call landing inside a protected
