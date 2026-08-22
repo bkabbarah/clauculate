@@ -25,7 +25,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any
 
-from . import chrome, clawd, scale
+from . import chart, chrome, clawd, scale
 from .accounts_tab import AccountsTab
 from .formatting import (
     COLOR_AMBER,
@@ -36,6 +36,7 @@ from .formatting import (
     format_percent,
     format_reset_absolute,
     format_reset_relative,
+    format_value,
 )
 from .poller import ErrorKind, Poller
 
@@ -443,20 +444,117 @@ class AccountTile:
         self.shell.destroy()
 
 
+class ResetQueue:
+    """The soonest upcoming resets across every account.
+
+    Four fixed rows, updated in place. Rebuilding them each second would churn
+    widgets and defeat the no-flash rule.
+    """
+
+    ROWS = 4
+
+    def __init__(self, parent: tk.Widget, panel: "Panel"):
+        self.panel = panel
+        self.frame = tk.Frame(parent, bg=BG_DETAIL)
+        tk.Label(
+            self.frame, text="RESETTING NEXT", bg=BG_DETAIL, fg=FG_MUTED,
+            font=scale.font(10, bold=True), pady=0, bd=0, highlightthickness=0,
+        ).grid(row=0, column=0, columnspan=5, sticky="w", pady=(0, scale.px(4)))
+
+        self.rows = []
+        for index in range(self.ROWS):
+            dot = tk.Canvas(
+                self.frame, width=scale.px(5), height=scale.px(5), bg=BG_DETAIL,
+                highlightthickness=0,
+            )
+            mark = dot.create_rectangle(
+                0, 0, scale.px(5), scale.px(5), fill=HAIRLINE, outline=""
+            )
+            dot.grid(row=index + 1, column=0, sticky="w", padx=(0, scale.px(9)))
+            account = tk.Label(
+                self.frame, text="", bg=BG_DETAIL, fg=FG_DIM, font=scale.font(11),
+                anchor="w", pady=0, bd=0, highlightthickness=0,
+            )
+            account.grid(row=index + 1, column=1, sticky="w", padx=(0, scale.px(9)))
+            window = tk.Label(
+                self.frame, text="", bg=BG_DETAIL, fg=RAW_KEY, font=scale.font(11),
+                anchor="w", pady=0, bd=0, highlightthickness=0,
+            )
+            window.grid(row=index + 1, column=2, sticky="w", padx=(0, scale.px(9)))
+            when = tk.Label(
+                self.frame, text="", bg=BG_DETAIL, fg=FG_DIM,
+                font=scale.font(11, mono=True), anchor="e", width=8,
+                pady=0, bd=0, highlightthickness=0,
+            )
+            when.grid(row=index + 1, column=3, sticky="e", padx=(0, scale.px(9)))
+            frees = tk.Label(
+                self.frame, text="", bg=BG_DETAIL, fg=RAW_KEY, font=scale.font(11),
+                anchor="w", pady=0, bd=0, highlightthickness=0,
+            )
+            frees.grid(row=index + 1, column=4, sticky="w")
+            self.rows.append((dot, mark, account, window, when, frees))
+
+    def update(self, statuses: dict) -> None:
+        upcoming = []
+        for label, status in statuses.items():
+            snapshot = status.snapshot
+            if snapshot is None:
+                continue
+            for name, percent, resets_at in snapshot.headline_metrics():
+                if resets_at is None:
+                    continue
+                remaining = (resets_at - snapshot.fetched_at).total_seconds()
+                if remaining <= 0:
+                    continue
+                upcoming.append((remaining, label, name, percent))
+        upcoming.sort(key=lambda item: item[0])
+
+        for index, row in enumerate(self.rows):
+            dot, mark, account, window, when, frees = row
+            if index < len(upcoming):
+                remaining, label, name, percent = upcoming[index]
+                first = index == 0
+                dot.itemconfigure(mark, fill=CORAL if first else HAIRLINE)
+                account.configure(text=label, fg=CORAL if first else FG_DIM)
+                window.configure(text=name)
+                when.configure(
+                    text=format_duration(remaining), fg=CORAL if first else FG_DIM
+                )
+                frees.configure(
+                    text=("frees %s" % format_percent(percent)) if percent else ""
+                )
+            else:
+                dot.itemconfigure(mark, fill=BG_DETAIL)
+                for widget in (account, window, when, frees):
+                    widget.configure(text="")
+
+
+def _is_inert(window) -> bool:
+    """A window with no reset clock and no usage carries no information.
+
+    Judged by shape, never by name, so a key that starts reporting real
+    numbers reappears on its own.
+    """
+    return window.resets_at is None and not window.utilization
+
+
 class Drawer:
     """Everything the endpoint returned, for the selected account only."""
 
     def __init__(self, parent: tk.Widget, panel: "Panel"):
         self.panel = panel
         self.frame = tk.Frame(parent, bg=BG_DETAIL)
-        self.label: str | None = None
+        self.label = None
         self._signature = None
         self._updaters: list[tuple[tk.Widget, Any]] = []
         self._absolute_cells: list[tk.Widget] = []
         self.compact = False
+        self.extras_open = False
+        self._extras_summary = ""
 
+        pad = scale.px(DRAWER_PAD)
         head = tk.Frame(self.frame, bg=BG_DETAIL)
-        head.pack(fill="x", padx=scale.px(DRAWER_PAD), pady=(scale.px(10), scale.px(8)))
+        head.pack(fill="x", padx=pad, pady=(scale.px(10), scale.px(8)))
         self.spine = tk.Frame(
             head, bg=BAR_TRACK, width=scale.px(SPINE), height=scale.px(13)
         )
@@ -467,8 +565,8 @@ class Drawer:
         )
         self.title.pack(side="left", padx=(0, scale.px(10)))
         self.path = tk.Label(
-            head, text="", bg=BG_DETAIL, fg=FG_MUTED, font=scale.font(11, mono=True),
-            pady=0, bd=0, highlightthickness=0,
+            head, text="", bg=BG_DETAIL, fg=FG_MUTED,
+            font=scale.font(11, mono=True), pady=0, bd=0, highlightthickness=0,
         )
         self.path.pack(side="left", padx=(0, scale.px(10)))
         self.stamp = tk.Label(
@@ -480,18 +578,39 @@ class Drawer:
             head, text="Copy raw JSON", command=self._copy,
             bg=BG_TRACK, fg=FG, font=scale.font(11), relief="flat",
             activebackground="#404040", activeforeground=FG,
-            padx=scale.px(9), pady=scale.px(3), borderwidth=0, highlightthickness=0,
+            padx=scale.px(9), pady=scale.px(3), borderwidth=0,
+            highlightthickness=0,
         ).pack(side="right")
 
-        self.body = tk.Frame(self.frame, bg=BG_DETAIL)
-        self.body.pack(fill="both", expand=True)
+        # Two columns: limits on the left, chart pinned right at its design width.
+        columns = tk.Frame(self.frame, bg=BG_DETAIL)
+        columns.pack(fill="both", expand=True, padx=pad, pady=(0, scale.px(10)))
+        columns.columnconfigure(0, weight=1)
+        columns.columnconfigure(1, weight=0, minsize=scale.px(chart.PLOT_W))
+        self.columns = columns
+
+        self.body = tk.Frame(columns, bg=BG_DETAIL)
+        self.body.grid(row=0, column=0, sticky="nsew", padx=(0, scale.px(18)))
+
+        self.right = tk.Frame(columns, bg=BG_DETAIL)
+        self.right.grid(row=0, column=1, sticky="n")
+        self.chart = chart.Chart(self.right, on_switch=self._on_chart_switch)
+        self.chart.frame.pack(anchor="n")
+
+        self.queue = ResetQueue(self.frame, panel)
+        self.queue.frame.pack(fill="x", padx=pad, pady=(0, pad))
+
+    # ------------------------------------------------------------- behaviour
+
+    def _copy(self) -> None:
+        if self.label:
+            self.panel.copy_raw(self.label)
+
+    def _on_chart_switch(self, _key) -> None:
+        self._render_chart()
 
     def set_compact(self, compact: bool) -> None:
-        """Drop the absolute reset time when the window is too narrow for it.
-
-        The relative time carries the same fact in fewer characters, so it is
-        the one that survives.
-        """
+        """Shed the absolute reset time and the chart as width runs out."""
         if compact == self.compact:
             return
         self.compact = compact
@@ -500,13 +619,39 @@ class Drawer:
                 cell.grid_remove() if compact else cell.grid()
             except tk.TclError:
                 pass
+        try:
+            if compact:
+                self.right.grid_remove()
+                self.columns.columnconfigure(1, minsize=0)
+            else:
+                self.right.grid()
+                self.columns.columnconfigure(1, minsize=scale.px(chart.PLOT_W))
+        except tk.TclError:
+            pass
 
-    def _copy(self) -> None:
-        if self.label:
-            self.panel.copy_raw(self.label)
+    def _toggle_extras(self, _event=None) -> None:
+        self.extras_open = not self.extras_open
+        if self.extras_open:
+            self.extras.pack(fill="x", pady=(scale.px(4), 0))
+        else:
+            self.extras.pack_forget()
+        self._paint_extras_toggle()
+        self.panel.on_layout_changed()
+
+    def _paint_extras_toggle(self) -> None:
+        if not hasattr(self, "extras_toggle"):
+            return
+        arrow = "  ▾" if self.extras_open else "  ▸"
+        self.extras_toggle.configure(
+            text=self._extras_summary + arrow,
+            fg=CORAL if self.extras_open else FG_MUTED,
+        )
+
+    # ------------------------------------------------------------------ show
 
     def show(self, status) -> None:
         signature = (status.label, self._key_signature(status))
+        changed_account = self.label != status.label
         self.label = status.label
 
         worst = status.snapshot.worst_utilization if status.snapshot else None
@@ -519,7 +664,13 @@ class Drawer:
         if signature != self._signature:
             self._build(status)
             self._signature = signature
+            self._sync_chart_options(status)
+            self._render_chart()
             return
+
+        if changed_account:
+            self._sync_chart_options(status)
+            self._render_chart()
 
         for entry in list(self._updaters):
             widget, produce = entry
@@ -544,20 +695,51 @@ class Drawer:
             tuple(snapshot.null_keys),
         )
 
+    # ----------------------------------------------------------------- chart
+
+    def _sync_chart_options(self, status) -> None:
+        options = chart.window_options(status.snapshot)
+        store = self.panel.store
+        known = set()
+        if store is not None and self.label:
+            try:
+                known = set(store.known_window_keys(self.label))
+            except Exception:
+                known = set()
+        available = {key: key in known for _caption, key in options}
+        self.chart.set_options(options, available)
+        self.chart.choose_available(available)
+
+    def _render_chart(self) -> None:
+        store = self.panel.store
+        key = self.chart.selected_key()
+        if store is None or key is None or not self.label:
+            self.chart.render([], 0)
+            return
+        try:
+            points = store.series_bucketed(self.label, key, days=7)
+            raw = len(store.series(self.label, key, days=7))
+        except Exception:
+            points, raw = [], 0
+        self.chart.render(points, raw)
+
+    # ----------------------------------------------------------------- build
+
     def _build(self, status) -> None:
         for child in self.body.winfo_children():
             child.destroy()
         self._updaters.clear()
         self._absolute_cells.clear()
+        self.extras_open = False
 
-        pad = scale.px(DRAWER_PAD)
         snapshot = status.snapshot
         if snapshot is None:
+            message = _error_text(status) or "no data for this account yet"
             tk.Label(
-                self.body, text="! " + (_error_text(status) or "no data yet"),
+                self.body, text="! " + message + " — no figures to show.",
                 bg=BG_DETAIL, fg=COLOR_RED, font=scale.font(12), anchor="w",
-                justify="left", wraplength=scale.px(800),
-            ).pack(fill="x", padx=pad, pady=(0, scale.px(8)))
+                justify="left", wraplength=scale.px(520),
+            ).pack(fill="x", pady=(0, scale.px(8)))
             if status.raw_text:
                 box = tk.Text(
                     self.body, height=5, bg="#111111", fg=FG,
@@ -565,18 +747,18 @@ class Drawer:
                 )
                 box.insert("1.0", status.raw_text)
                 box.configure(state="disabled")
-                box.pack(fill="x", padx=pad, pady=(0, scale.px(8)))
+                box.pack(fill="x", pady=(0, scale.px(8)))
             return
 
         if status.error:
             tk.Label(
                 self.body, text="! " + _error_text(status), bg=BG_DETAIL,
                 fg=COLOR_AMBER, font=scale.font(12), anchor="w",
-                wraplength=scale.px(800),
-            ).pack(fill="x", padx=pad, pady=(0, scale.px(4)))
+                wraplength=scale.px(520),
+            ).pack(fill="x", pady=(0, scale.px(4)))
 
         grid = tk.Frame(self.body, bg=BG_DETAIL)
-        grid.pack(fill="x", padx=pad, pady=(0, scale.px(8)))
+        grid.pack(fill="x")
         grid.columnconfigure(5, weight=1)
 
         tk.Label(
@@ -593,9 +775,13 @@ class Drawer:
                 grid, row, name, limit.kind or "", limit.percent,
                 limit.resets_at, limit.is_active,
             )
+        self._inert = []
         for window in snapshot.windows:
             name = window_display_name(window.key)
             if name in shown:
+                continue
+            if _is_inert(window):
+                self._inert.append(window)
                 continue
             row = self._limit_row(
                 grid, row, name, window.key, window.utilization,
@@ -606,12 +792,89 @@ class Drawer:
             len(snapshot.windows) + len(snapshot.limits) + len(snapshot.blocks)
             + len(snapshot.scalars) + len(snapshot.null_keys)
         )
+        behind = [b.key for b in snapshot.blocks]
+        if self._inert:
+            behind.append("%d idle window%s" % (
+                len(self._inert), "" if len(self._inert) == 1 else "s"
+            ))
+        if status.raw_text:
+            behind.append("raw response")
+        self._extras_summary = "%d keys returned · %d reported null · %s behind" % (
+            total, len(snapshot.null_keys),
+            ", ".join(behind) if behind else "nothing else",
+        )
+        self.extras_toggle = tk.Label(
+            self.body, text="", bg=BG_DETAIL, fg=FG_MUTED, font=scale.font(11),
+            anchor="w", cursor="hand2", pady=0, bd=0, highlightthickness=0,
+        )
+        self.extras_toggle.pack(fill="x", pady=(scale.px(8), 0))
+        self.extras_toggle.bind("<Button-1>", self._toggle_extras)
+        self._paint_extras_toggle()
+
+        self.extras = tk.Frame(self.body, bg=BG_DETAIL)
+        self._build_extras(status, snapshot)
+
+    def _extras_head(self, text: str) -> None:
         tk.Label(
-            self.body,
-            text="%d keys returned · %d reported null" % (total, len(snapshot.null_keys)),
-            bg=BG_DETAIL, fg=FG_MUTED, font=scale.font(11), anchor="w",
+            self.extras, text=text, bg=BG_DETAIL, fg=FG_MUTED,
+            font=scale.font(10, bold=True), anchor="w",
             pady=0, bd=0, highlightthickness=0,
-        ).pack(fill="x", padx=pad, pady=(0, scale.px(10)))
+        ).pack(fill="x", pady=(scale.px(6), scale.px(2)))
+
+    def _build_extras(self, status, snapshot) -> None:
+        """Blocks that used to sit inline: idle windows, extra_usage, spend."""
+        if self._inert:
+            self._extras_head("IDLE WINDOWS")
+            tk.Label(
+                self.extras,
+                text=", ".join(w.key for w in self._inert)
+                + "  (no reset clock, no usage)",
+                bg=BG_DETAIL, fg=FG_MUTED, font=scale.font(11), anchor="w",
+                justify="left", wraplength=scale.px(520),
+                pady=0, bd=0, highlightthickness=0,
+            ).pack(fill="x")
+
+        for block in snapshot.blocks:
+            self._extras_head(block.key.upper())
+            table = tk.Frame(self.extras, bg=BG_DETAIL)
+            table.pack(fill="x")
+            for index, (key, value) in enumerate(block.fields):
+                tk.Label(
+                    table, text=key, bg=BG_DETAIL, fg=FG_MUTED,
+                    font=scale.font(11, mono=True), anchor="w",
+                    pady=0, bd=0, highlightthickness=0,
+                ).grid(row=index, column=0, sticky="w", padx=(0, scale.px(12)))
+                tk.Label(
+                    table, text=format_value(value), bg=BG_DETAIL, fg=FG,
+                    font=scale.font(11), anchor="w",
+                    pady=0, bd=0, highlightthickness=0,
+                ).grid(row=index, column=1, sticky="w")
+
+        if snapshot.scalars:
+            self._extras_head("OTHER")
+            for key, value in snapshot.scalars:
+                tk.Label(
+                    self.extras, text="%s: %s" % (key, format_value(value)),
+                    bg=BG_DETAIL, fg=FG, font=scale.font(11), anchor="w",
+                    pady=0, bd=0, highlightthickness=0,
+                ).pack(fill="x")
+
+        if snapshot.null_keys:
+            self._extras_head("REPORTED BUT NULL")
+            tk.Label(
+                self.extras, text=", ".join(snapshot.null_keys), bg=BG_DETAIL,
+                fg=FG_MUTED, font=scale.font(11), anchor="w", justify="left",
+                wraplength=scale.px(520), pady=0, bd=0, highlightthickness=0,
+            ).pack(fill="x")
+
+        if status.raw_text:
+            box = tk.Text(
+                self.extras, height=6, bg="#111111", fg=FG,
+                font=scale.font(11, mono=True), relief="flat", wrap="none",
+            )
+            box.insert("1.0", status.raw_text)
+            box.configure(state="disabled")
+            box.pack(fill="x", pady=(scale.px(6), 0))
 
     def _limit_row(self, grid, row, name, raw_key, percent, resets_at, active) -> int:
         gap = scale.px(12)
@@ -628,9 +891,9 @@ class Drawer:
         ).pack(side="left")
 
         tk.Label(
-            grid, text=format_percent(percent), bg=BG_DETAIL, fg=color_for(percent),
-            font=scale.font(13, bold=True), anchor="e", width=5,
-            pady=0, bd=0, highlightthickness=0,
+            grid, text=format_percent(percent), bg=BG_DETAIL,
+            fg=color_for(percent), font=scale.font(13, bold=True), anchor="e",
+            width=5, pady=0, bd=0, highlightthickness=0,
         ).grid(row=row, column=1, sticky="e", padx=(0, scale.px(8)))
 
         bar = HBar(grid, width=84)
@@ -647,8 +910,9 @@ class Drawer:
         )
 
         absolute = tk.Label(
-            grid, text=format_reset_absolute(resets_at), bg=BG_DETAIL, fg=FG_MUTED,
-            font=scale.font(12), anchor="w", pady=0, bd=0, highlightthickness=0,
+            grid, text=format_reset_absolute(resets_at), bg=BG_DETAIL,
+            fg=FG_MUTED, font=scale.font(12), anchor="w",
+            pady=0, bd=0, highlightthickness=0,
         )
         absolute.grid(row=row, column=4, sticky="w")
         self._absolute_cells.append(absolute)
@@ -675,6 +939,7 @@ class Panel:
         self._anim_job = None
         self._resize_job = None
         self._columns = 2
+        self._scrollables: list[Any] = []
         self._bar_level = None
 
         self.selected_label: str | None = None
@@ -706,6 +971,48 @@ class Panel:
             if handle is not None:
                 self.root.after_cancel(handle)
                 setattr(self, attr, None)
+
+    def register_scrollable(self, canvas) -> None:
+        """Add a canvas to the wheel-dispatch list."""
+        if canvas not in self._scrollables:
+            self._scrollables.append(canvas)
+
+    def _scroll_target(self, widget):
+        """Walk up from a widget to the scrollable canvas containing it."""
+        seen = 0
+        while widget is not None and seen < 40:
+            if widget in self._scrollables:
+                return widget
+            name = widget.winfo_parent()
+            if not name:
+                return None
+            try:
+                widget = widget.nametowidget(name)
+            except (KeyError, tk.TclError):
+                return None
+            seen += 1
+        return None
+
+    def _on_mousewheel(self, event) -> None:
+        """Scroll whatever the pointer is over.
+
+        bind_all sends every wheel event to one handler, so the target has to
+        be resolved from the pointer. Without this the hidden Usage board eats
+        the wheel while the Accounts list is on screen.
+        """
+        target = self._scroll_target(event.widget)
+        if target is None:
+            try:
+                under = self.window.winfo_containing(event.x_root, event.y_root)
+            except (tk.TclError, KeyError):
+                under = None
+            target = self._scroll_target(under)
+        if target is None:
+            return
+        try:
+            target.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        except tk.TclError:
+            pass
 
     def register_sprite(self, canvas, cell, mood_of) -> None:
         self._sprites.append((canvas, cell, mood_of))
@@ -756,6 +1063,7 @@ class Panel:
         if self.app_state is not None:
             self.accounts_tab = AccountsTab(self.accounts_frame, self.app_state)
             self.accounts_tab.frame.pack(fill="both", expand=True)
+            self.register_scrollable(self.accounts_tab.canvas)
         else:
             tk.Label(
                 self.accounts_frame, text="Account management unavailable here.",
@@ -763,6 +1071,7 @@ class Panel:
             ).pack(padx=scale.px(DRAWER_PAD), pady=scale.px(DRAWER_PAD))
 
         self._build_board(self.usage_frame)
+        win.bind_all("<MouseWheel>", self._on_mousewheel)
         self.select_tab(self.active_tab)
         self._on_sort(self.sort_mode)
 
@@ -948,10 +1257,7 @@ class Panel:
             self._schedule_reflow(event.width)
 
         canvas.bind("<Configure>", on_canvas_configure)
-        canvas.bind_all(
-            "<MouseWheel>",
-            lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"),
-        )
+        self.register_scrollable(canvas)
 
         self.canvas = canvas
         self.inner = inner
@@ -1090,6 +1396,7 @@ class Panel:
 
         self._update_chip(statuses)
         self._update_strip(statuses)
+        self.drawer.queue.update(statuses)
 
         self._refresh_job = self.root.after(1000, self.refresh)
 

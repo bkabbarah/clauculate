@@ -147,12 +147,43 @@ class FakePoller:
         return 172.0
 
 
+def _seed_store(poller):
+    """A throwaway SQLite store with a week of plausible history."""
+    import math
+    import tempfile
+    from claude_usage.store import HistoryStore
+
+    path = Path(tempfile.gettempdir()) / "clauculate_demo_history.sqlite3"
+    if path.exists():
+        path.unlink()
+    store = HistoryStore(path)
+    now = int(time.time())
+    rows = []
+    for account in poller.accounts:
+        for key, base in (("five_hour", 30), ("seven_day", 55),
+                          ("limits:weekly_scoped [Fable]", 70)):
+            for i in range(7 * 24 * 20):          # 7 days at 3-minute steps
+                ts = now - i * 180
+                wave = math.sin(i / 90.0) * 18 + math.sin(i / 17.0) * 6
+                value = max(0.0, min(100.0, base + wave))
+                rows.append((ts, account.label, key, value, None))
+    with store._lock:
+        store._conn.executemany(
+            "INSERT INTO samples (ts,account,window_key,utilization,resets_at)"
+            " VALUES (?,?,?,?,?)", rows)
+        store._conn.commit()
+    print("seeded %d history rows" % len(rows))
+    return store
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--accounts", type=int, default=6)
     parser.add_argument("--shot", type=Path, default=None)
     parser.add_argument("--height", type=int, default=900)
     parser.add_argument("--width", type=int, default=1000)
+    parser.add_argument("--history", action="store_true",
+                        help="seed a temp store so the chart has data")
     parser.add_argument("--expand", type=int, default=None,
                         help="1-based index of a card to expand")
     parser.add_argument("--scroll", type=float, default=0.0,
@@ -165,7 +196,8 @@ def main() -> int:
     root.withdraw()
 
     poller = FakePoller(args.accounts)
-    panel = Panel(root, poller, store=None)
+    store = _seed_store(poller) if args.history else None
+    panel = Panel(root, poller, store=store)
     panel.show()
     panel.window.geometry("%dx%d+30+20" % (args.width, args.height))
     if args.expand:

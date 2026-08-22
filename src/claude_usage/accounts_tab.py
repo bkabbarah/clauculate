@@ -75,6 +75,7 @@ class AccountsTab:
         self.entries: list = []
         self.labels: dict[str, str] = {}
         self._scanning = False
+        self.editing: str | None = None
         self._build()
 
     # ------------------------------------------------------------------ build
@@ -89,7 +90,10 @@ class AccountsTab:
             text="Scan to find Claude profiles on this machine.",
             bg=BG, fg=FG_DIM, font=FONT_SMALL(), anchor="w", justify="left",
         )
-        self.status.pack(fill="x", padx=PAD(), pady=(PAD(), 0))
+        self.status.pack(fill="x", padx=PAD(), pady=(PAD(), GAP()))
+
+        self.banner_host = tk.Frame(self.frame, bg=BG)
+        self.banner_host.pack(fill="x")
 
         # --- scrollable list of discovered profiles
         body = tk.Frame(self.frame, bg=BG)
@@ -113,6 +117,7 @@ class AccountsTab:
             lambda e: canvas.itemconfigure(item, width=e.width),
         )
         self.list_frame = inner
+        self.canvas = canvas
 
         self._build_add_section()
 
@@ -216,8 +221,11 @@ class AccountsTab:
         if self.scan_button is not None:
             self.scan_button.configure(text="Scan for profiles", state="normal")
         self.entries, self.labels = entries, labels
+        self.editing = None
 
         for child in self.list_frame.winfo_children():
+            child.destroy()
+        for child in self.banner_host.winfo_children():
             child.destroy()
 
         if error:
@@ -242,74 +250,264 @@ class AccountsTab:
             summary += "   |   %d not yet monitored" % len(unenrolled)
         self.status.configure(text=summary, fg=FG_DIM)
 
-        for entry in entries:
-            self._render_row(entry)
+        if dupes:
+            self._render_banner(len(dupes))
 
-    def _render_row(self, entry) -> None:
+        for entry, indent in self._nested_order(entries):
+            self._render_row(entry, indent)
+
+    @staticmethod
+    def _nested_order(entries):
+        """Order duplicates directly under the folder they duplicate.
+
+        Putting the relationship in the layout is the point: a doubled account
+        is obvious from the shape of the list, not just from a label.
+        """
+        children: dict[str, list] = {}
+        for entry in entries:
+            if entry.duplicate_of:
+                children.setdefault(entry.duplicate_of, []).append(entry)
+
+        ordered = []
+        for entry in entries:
+            if entry.duplicate_of:
+                continue
+            ordered.append((entry, 0))
+            for child in children.get(entry.name, []):
+                ordered.append((child, 1))
+        # Any duplicate whose parent is missing still has to appear.
+        placed = {id(e) for e, _ in ordered}
+        for entry in entries:
+            if id(entry) not in placed:
+                ordered.append((entry, 1))
+        return ordered
+
+    def _render_banner(self, count: int) -> None:
+        banner = tk.Frame(self.banner_host, bg="#241f14")
+        banner.pack(fill="x", padx=PAD(), pady=(0, scale.px(10)))
+        tk.Frame(banner, bg=WARN, width=scale.px(3)).pack(
+            side="left", fill="y", padx=(0, GAP())
+        )
+        tk.Label(
+            banner,
+            text="%d folder%s hold a second login to an account you already "
+                 "monitor. Each one doubles that account's polls against the "
+                 "same rate limit." % (count, "" if count == 1 else "s"),
+            bg="#241f14", fg=WARN, font=FONT_SMALL(), anchor="w",
+            justify="left", wraplength=scale.px(700),
+        ).pack(side="left", pady=GAP())
+
+    def _render_row(self, entry, indent: int = 0) -> None:
         if entry.error:
-            accent = BAD
+            accent, body = BAD, BG_CARD
         elif entry.duplicate_of:
-            accent = WARN
+            accent, body = WARN, "#1e1c17"
         elif entry.enrolled_as:
-            accent = OK
+            accent, body = OK, BG_CARD
         else:
-            accent = FG_MUTED
+            accent, body = FG_MUTED, BG_CARD
 
         shell = tk.Frame(self.list_frame, bg=BG)
-        shell.pack(fill="x", pady=3)
+        shell.pack(fill="x", pady=scale.px(2), padx=(scale.px(22 * indent), 0))
         tk.Frame(shell, bg=accent, width=scale.px(3)).pack(side="left", fill="y")
-        row = tk.Frame(shell, bg=BG_CARD)
+        row = tk.Frame(shell, bg=body)
         row.pack(side="left", fill="both", expand=True)
 
-        # grid, not pack: pack lets the left and right groups overlap once the
-        # row runs out of width, which silently mangles both.
-        top = tk.Frame(row, bg=BG_CARD)
-        top.pack(fill="x", padx=PAD(), pady=(GAP(), 0))
-        top.columnconfigure(2, weight=1)   # the tier column absorbs the slack
+        top = tk.Frame(row, bg=body)
+        top.pack(fill="x", padx=PAD(), pady=(scale.px(10), 0))
+        top.columnconfigure(3, weight=1)
 
         tk.Label(
-            top, text=entry.name, bg=BG_CARD, fg=FG, font=FONT_MONO(), anchor="w"
+            top, text=entry.name, bg=body, fg=FG, font=FONT_MONO(), anchor="w",
+            pady=0, bd=0, highlightthickness=0,
         ).grid(row=0, column=0, sticky="w", padx=(0, GAP() + 2))
 
         tk.Label(
-            top, text=entry.status_text, bg=BG_CARD,
+            top, text=entry.status_text, bg=body,
             fg=BAD if entry.error else FG, font=FONT(), anchor="w",
+            pady=0, bd=0, highlightthickness=0,
         ).grid(row=0, column=1, sticky="w", padx=(0, GAP() + 2))
 
-        tier = ""
         if entry.profile and entry.profile.rate_limit_tier:
-            # "default_claude_max_20x" carries one bit of information: "max_20x".
             tier = entry.profile.rate_limit_tier.replace("default_claude_", "")
-        tk.Label(
-            top, text=tier, bg=BG_CARD, fg=FG_MUTED, font=FONT_SMALL(), anchor="w", width=9
-        ).grid(row=0, column=2, sticky="w")
+            chip = tk.Label(
+                top, text=tier, bg="#2a2a2a", fg=FG_DIM,
+                font=scale.font(10, mono=True), padx=scale.px(6),
+                pady=scale.px(2), bd=0, highlightthickness=0,
+            )
+            chip.grid(row=0, column=2, sticky="w")
 
+        # --- right-hand controls
         if entry.duplicate_of:
             tk.Label(
-                top, text="duplicate of %s" % entry.duplicate_of, bg=BG_CARD,
+                top, text="duplicate of %s" % entry.duplicate_of, bg=body,
                 fg=WARN, font=FONT_SMALL(), anchor="e",
-            ).grid(row=0, column=3, sticky="e", padx=(GAP(), 0))
+                pady=0, bd=0, highlightthickness=0,
+            ).grid(row=0, column=4, sticky="e", padx=(GAP(), 0))
         elif entry.enrolled_as:
-            tk.Label(
-                top, text="monitored as %s" % entry.enrolled_as, bg=BG_CARD,
-                fg=OK, font=FONT_SMALL(), anchor="e",
-            ).grid(row=0, column=3, sticky="e", padx=(GAP(), GAP()))
+            self._alias_control(top, entry, body, entry.enrolled_as, "monitored as")
             tk.Button(
                 top, text="Remove", command=lambda e=entry: self._remove(e),
-                bg=BG_TRACK, fg=FG, font=FONT_SMALL(), relief="flat",
-                activebackground="#404040", activeforeground=FG, padx=scale.px(8),
-            ).grid(row=0, column=4, sticky="e")
+                bg=BG_TRACK, fg=FG_DIM, font=FONT_SMALL(), relief="flat",
+                activebackground="#404040", activeforeground=FG,
+                padx=scale.px(8), pady=scale.px(2), bd=0, highlightthickness=0,
+            ).grid(row=0, column=5, sticky="e", padx=(GAP(), 0))
         elif not entry.error:
+            suggested = self.labels.get(str(entry.config_dir), entry.name.lstrip("."))
+            self._alias_control(top, entry, body, suggested, "label")
             tk.Button(
                 top, text="Add to monitor", command=lambda e=entry: self._add(e),
-                bg=CORAL, fg="#1a1a1a", font=scale.font(11, bold=True), relief="flat",
-                activebackground="#e08670", activeforeground="#1a1a1a", padx=10,
-            ).grid(row=0, column=4, sticky="e", padx=(GAP(), 0))
+                bg=CORAL, fg="#1a1a1a", font=scale.font(11, bold=True),
+                relief="flat", activebackground="#e08670",
+                activeforeground="#1a1a1a", padx=scale.px(11), pady=scale.px(3),
+                bd=0, highlightthickness=0,
+            ).grid(row=0, column=5, sticky="e", padx=(GAP(), 0))
+
+        second = tk.Frame(row, bg=body)
+        second.pack(fill="x", padx=PAD(), pady=(scale.px(5), scale.px(10)))
+        tk.Label(
+            second, text=str(entry.config_dir), bg=body, fg=FG_MUTED,
+            font=scale.font(11, mono=True), anchor="w",
+            pady=0, bd=0, highlightthickness=0,
+        ).pack(side="left")
+
+        note, tone = self._row_note(entry)
+        if note:
+            tk.Label(
+                second, text=note, bg=body, fg=tone, font=FONT_SMALL(), anchor="e",
+                pady=0, bd=0, highlightthickness=0,
+            ).pack(side="right")
+
+    @staticmethod
+    def _row_note(entry):
+        if entry.duplicate_of:
+            return "same account.uuid — not polled", WARN
+        if entry.error:
+            if "re-auth" in entry.error or "expired" in entry.error:
+                return "token expired — re-run claude here", WARN
+            return ".credentials.json missing or unreadable", BAD
+        return "", FG_MUTED
+
+    # ----------------------------------------------------------------- alias
+
+    def _alias_control(self, parent, entry, body, current: str, prefix: str) -> None:
+        """Click the alias to rename it. Only accounts.json ever changes."""
+        holder = tk.Frame(parent, bg=body)
+        holder.grid(row=0, column=4, sticky="e", padx=(GAP(), 0))
+
+        if self.editing == entry.name:
+            var = tk.StringVar(value=current)
+            box = tk.Entry(
+                holder, textvariable=var, width=16, bg="#141414", fg=FG,
+                insertbackground=FG, relief="flat", font=FONT_MONO(),
+                highlightthickness=scale.px(1), highlightbackground=CORAL,
+                highlightcolor=CORAL,
+            )
+            box.pack(side="left", padx=(0, GAP()))
+            box.focus_set()
+            box.select_range(0, "end")
+            commit = lambda _e=None: self._commit_alias(entry, var.get())
+            cancel = lambda _e=None: self._cancel_alias()
+            box.bind("<Return>", commit)
+            box.bind("<Escape>", cancel)
+            tk.Button(
+                holder, text="Save", command=commit, bg=CORAL, fg="#1a1a1a",
+                font=scale.font(11, bold=True), relief="flat",
+                activebackground="#e08670", activeforeground="#1a1a1a",
+                padx=scale.px(9), pady=scale.px(2), bd=0, highlightthickness=0,
+            ).pack(side="left", padx=(0, GAP()))
+            tk.Label(
+                holder, text="Cancel", bg=body, fg=FG_DIM, font=FONT_SMALL(),
+                cursor="hand2", pady=0, bd=0, highlightthickness=0,
+            ).pack(side="left")
+            holder.winfo_children()[-1].bind("<Button-1>", cancel)
+            return
 
         tk.Label(
-            row, text=str(entry.config_dir), bg=BG_CARD, fg=FG_MUTED,
-            font=FONT_SMALL(), anchor="w",
-        ).pack(fill="x", padx=PAD(), pady=(0, GAP()))
+            holder, text=prefix, bg=body, fg=FG_MUTED, font=FONT_SMALL(),
+            pady=0, bd=0, highlightthickness=0,
+        ).pack(side="left", padx=(0, scale.px(5)))
+        alias = tk.Label(
+            holder, text=current, bg=body,
+            fg=OK if entry.enrolled_as else FG_DIM, font=FONT(),
+            cursor="xterm", pady=0, bd=0, highlightthickness=0,
+        )
+        alias.pack(side="left")
+        underline = tk.Frame(holder, bg="#4a4a4a", height=scale.px(1))
+        alias.bind("<Button-1>", lambda _e, e=entry: self._start_alias(e))
+        alias.bind("<Enter>", lambda _e: alias.configure(fg=FG))
+        alias.bind(
+            "<Leave>",
+            lambda _e: alias.configure(fg=OK if entry.enrolled_as else FG_DIM),
+        )
+        del underline
+
+    def _start_alias(self, entry) -> None:
+        self.editing = entry.name
+        self._render(self.entries, self.labels, None)
+
+    def _cancel_alias(self) -> None:
+        self.editing = None
+        self._render(self.entries, self.labels, None)
+
+    def _commit_alias(self, entry, raw: str) -> None:
+        """Rename in accounts.json, and carry the history rows with it."""
+        label = "-".join(raw.split()).strip()
+        if not label:
+            self._cancel_alias()
+            return
+
+        data = self._load_raw()
+        target = str(Path(entry.config_dir).resolve()).lower()
+        existing = set()
+        old_label = None
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                path = str(
+                    Path(self.state.expand(item.get("config_dir", ""))).resolve()
+                ).lower()
+            except OSError:
+                path = ""
+            if path == target:
+                old_label = item.get("label")
+            else:
+                existing.add(str(item.get("label")))
+
+        unique, n = label, 2
+        while unique in existing:
+            unique, n = "%s-%d" % (label, n), n + 1
+
+        if old_label is None:
+            # Not monitored yet: remember the alias for the Add button.
+            self.labels[str(entry.config_dir)] = unique
+            self.editing = None
+            self._render(self.entries, self.labels, None)
+            return
+
+        for item in data:
+            if isinstance(item, dict) and item.get("label") == old_label:
+                item["label"] = unique
+
+        if self._save_raw(data):
+            store = getattr(self.state, "store", None)
+            if store is not None and old_label != unique:
+                try:
+                    moved = store.rename_account(old_label, unique)
+                    self.status.configure(
+                        text="Renamed %s to %s, carrying %d history row%s."
+                        % (old_label, unique, moved, "" if moved == 1 else "s"),
+                        fg=OK,
+                    )
+                except Exception:
+                    self.status.configure(
+                        text="Renamed to %s, but history could not be moved."
+                        % unique,
+                        fg=WARN,
+                    )
+        self.editing = None
+        self.scan()
 
     # ---------------------------------------------------------------- actions
 

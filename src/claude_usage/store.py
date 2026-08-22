@@ -93,6 +93,45 @@ class HistoryStore:
             )
             return [(int(r[0]), float(r[1])) for r in cur.fetchall()]
 
+    def series_bucketed(
+        self, account: str, window_key: str, days: int = 7,
+        bucket_seconds: int = 1200,
+    ) -> list[tuple[int, float]]:
+        """Downsampled series for the chart.
+
+        Seven days at the 180s poll floor is roughly 3,300 rows per window per
+        account. Bucketing in SQL keeps that out of the panel entirely; the
+        chart only ever holds a few hundred points.
+        """
+        cutoff = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
+        bucket = max(60, int(bucket_seconds))
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT (ts / ?) * ? AS bucket, AVG(utilization)"
+                " FROM samples"
+                " WHERE account = ? AND window_key = ? AND ts >= ?"
+                "   AND utilization IS NOT NULL"
+                " GROUP BY bucket ORDER BY bucket",
+                (bucket, bucket, account, window_key, cutoff),
+            )
+            return [(int(r[0]), float(r[1])) for r in cur.fetchall()]
+
+    def rename_account(self, old_label: str, new_label: str) -> int:
+        """Carry an account's history across a label change.
+
+        History rows are keyed by label, so renaming in accounts.json without
+        this would orphan every sample and restart the sparkline from nothing.
+        """
+        if old_label == new_label:
+            return 0
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE samples SET account = ? WHERE account = ?",
+                (new_label, old_label),
+            )
+            self._conn.commit()
+            return cur.rowcount
+
     def known_window_keys(self, account: str) -> list[str]:
         with self._lock:
             cur = self._conn.execute(

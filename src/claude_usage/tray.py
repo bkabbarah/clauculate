@@ -22,7 +22,7 @@ ICON_SIZE = 64
 TOOLTIP_LIMIT = 127
 
 
-RING_WIDTH = 6          # at ICON_SIZE; Windows downscales to 16/24/32
+RING_WIDTH = 7          # at ICON_SIZE; Windows downscales to 16/24/32
 RING_TRACK = "#3a3a3a"
 
 
@@ -36,8 +36,12 @@ def _render_icon(worst: float | None) -> Image.Image:
     image = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    inset = 2
-    box = (inset, inset, ICON_SIZE - inset - 1, ICON_SIZE - inset - 1)
+    # No margin: the ring reaches the bitmap edge so the icon occupies as
+    # much of the tray slot as Windows will give it. The half-pixel inset is
+    # only what the stroke needs to avoid being clipped.
+    # PIL strokes inward from the outline, so a zero inset still draws the
+    # full ring width and the bitmap is used edge to edge.
+    box = (0, 0, ICON_SIZE - 1, ICON_SIZE - 1)
     draw.ellipse(box, outline=RING_TRACK, width=RING_WIDTH)
 
     if worst is not None:

@@ -102,25 +102,42 @@ install. Flags worth knowing:
 
 ## What you get
 
-**The tray icon** takes its colour from the worst utilization across your
-accounts: green below 50%, amber to 80%, red above. Hover for one line per
+**The tray icon** is a ring gauge around Clawd: the arc grows with the worst
+utilization across your accounts and runs green, amber, red. An arc survives
+being shrunk to the 16px Windows gives it, where a number would not. Hover for one line per
 account. Windows caps that tooltip at 128 characters, so Clauculate shortens
 long labels to keep every account visible, and says how many it dropped when
 even that fails.
 
-**The panel** opens when you click the icon. Accounts sit on a two-column
-board. Each tile carries session, weekly, and model-scoped columns beside a
-freshness stamp, and selecting one fills the drawer underneath with everything
-the endpoint returned for that account, including keys this build has never
-seen.
+**The panel** opens when you click the icon. Accounts sit on a board of tiles,
+one to three columns depending on the width you give it. Each tile carries
+session, weekly and model-scoped columns beside a freshness stamp, the soonest
+reset, and a count of how many keys that account returned.
 
-The drawer names every limit twice: a readable title, and the raw key beside it
-in grey. A renamed or new key stays visible rather than hiding behind a
-friendly label. Reset clocks appear two ways, `resets in 2h 14m` next to
-`tomorrow 5:15 AM`, converted from UTC through the OS timezone rules so DST
-lands right. **Copy raw JSON** covers the day the schema moves.
+Selecting a tile fills the drawer underneath. On the left it lists every limit
+twice: a readable title, and the raw key beside it in grey, so a renamed or
+unknown key stays visible instead of hiding behind a friendly label. Reset
+clocks appear two ways, `resets in 2h 14m` next to `tomorrow 5:15 AM`,
+converted from UTC through the OS timezone rules so DST lands right.
 
-The app bar holds a chip that cycles worst, average, and most free when you
+![drawer](shots/board_chart.png)
+
+On the right is a seven-day chart with guides at 80% and 50%, and a switch for
+session, weekly or the scoped model. Hovering gives you a crosshair, the value
+under the cursor, and how much it moved in the hour before. The endpoint hands
+out a snapshot with no past, so this is drawn from local history: about 3,300
+polls a week per window, bucketed to 20 minutes in SQL so the panel never holds
+more than a few hundred points.
+
+Below that, **RESETTING NEXT** lists the soonest resets across all your
+accounts together, which is the one view that tells you when to expect
+capacity back.
+
+Everything else the endpoint returned sits behind one line at the foot of the
+limits list: `extra_usage`, `spend`, keys that came back null, windows sitting
+idle with no reset clock and no usage, and the raw response. Click to open it.
+
+The app bar holds a chip that cycles worst, average and most free when you
 click it, plus a sort toggle for the board. Under it a status strip names the
 last poll, the next one, and any account in trouble.
 
@@ -145,13 +162,16 @@ the account rather than decorating it:
 
 **Scan for profiles** walks every `~/.claude*` directory holding a credential
 store, asks `/api/oauth/profile` who owns each one, and lists what it found.
-Add a profile to the monitor or drop it, and Clauculate suggests a label from
-the email's local part.
 
 The tab exists because a profile directory tells you nothing about which
-account lives in it. Clauculate dedupes on `account.uuid` and paints the extra
-folders amber, so you catch a doubled account on the screen rather than in your
-rate limit a week later.
+account lives in it. Clauculate dedupes on `account.uuid` and **nests each
+duplicate under the folder it duplicates**, so a doubled account is visible in
+the shape of the list rather than buried in a label. A banner at the top says
+how many folders are doubling an account's polls against one rate limit.
+
+Click any alias to rename it. The rename rewrites `accounts.json` and carries
+that account's history rows with it, because history is keyed by label and
+would otherwise be orphaned.
 
 **It cannot sign you in.** A login means handling your password and writing a
 credential file, and this app does neither. It builds the right command for
@@ -159,8 +179,20 @@ your shell, copies it, and opens a terminal with `CLAUDE_CONFIG_DIR` set. You
 run the login and approve it in the browser. Claude Code writes the
 credentials. The next scan picks up the new profile.
 
-Add and Remove touch `accounts.json` and nothing else. Removing an account
-stops the polling. Your folder and your login survive untouched.
+Add, Remove and rename touch `accounts.json` and nothing else. Removing an
+account stops the polling. Your folder and your login survive untouched.
+
+## Display scaling
+
+Every dimension is design px from the layout, multiplied by one factor read
+from the display at startup: `S = dpi / 96`. Fonts are sized in pixels rather
+than points and go through the same factor.
+
+That matters because Tk renders point-sized fonts through the DPI while a raw
+pixel number ignores it. Mixing the two makes text grow on a scaled display
+while bars and padding stay put. Nothing is pinned to one machine: `S` is 1.0
+at 96dpi and 2.0 at 200%, and the window opens at the design size clamped to
+whatever display it lands on.
 
 ## How it polls
 

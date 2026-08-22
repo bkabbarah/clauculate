@@ -39,9 +39,10 @@ def _install_guard(accounts) -> None:
 class _AppState:
     """The narrow surface the Accounts tab is allowed to touch."""
 
-    def __init__(self, accounts_path, poller, logger, on_reload):
+    def __init__(self, accounts_path, poller, logger, on_reload, store=None):
         self.accounts_path = accounts_path
         self.poller = poller
+        self.store = store
         self.logger = logger
         self._on_reload = on_reload
 
@@ -206,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         poller=poller,
         logger=logger,
         on_reload=lambda: (root.after(0, panel.refresh), tray.update()),
+        store=store,
     )
 
     panel = Panel(root, poller, store, app_state=app_state)
