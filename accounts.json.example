@@ -1,0 +1,10 @@
+[
+  {
+    "label": "personal",
+    "config_dir": "%USERPROFILE%/.claude"
+  },
+  {
+    "label": "work",
+    "config_dir": "%USERPROFILE%/.claude-work"
+  }
+]
